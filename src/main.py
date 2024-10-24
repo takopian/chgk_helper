@@ -75,7 +75,7 @@ async def get_registered(update: Update, context: CallbackContext) -> None:
     chat_data = polls_data.get_or_create_chat_data(chat_id)
     upcoming_games = [
         quiz.poll_text for quiz in chat_data.registered_quizzes
-        if quiz.date > datetime.utcnow()
+        if quiz.date.date() >= datetime.utcnow().date()
     ]
     if not upcoming_games:
         await update.message.reply_text("Нет зарегистрированных игр.")
@@ -116,7 +116,7 @@ async def create_poll(update: Update, context) -> None:
 
     poll_size = 10 if len(new_quizzes) % 10 != 1 else 9
     polls = [
-        [f"{quiz.poll_text}, сложность {quiz.difficulty}" for quiz in new_quizzes[i: i + poll_size]]
+        [f"{quiz.poll_text[:90]}, с-ь {quiz.difficulty}" for quiz in new_quizzes[i: i + poll_size]]
         for i in range(0, len(new_quizzes), poll_size)
     ]
     for options in polls:
