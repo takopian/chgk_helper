@@ -27,21 +27,16 @@ async def get_difficulty(link):
         """
 
         async with session.post(
-                "http://localhost:11434/api/chat",
+                "http://ollama:11434/api/generate",
                 json={
                     "model": "llama3.1",
                     "stream": False,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ]
+                    "prompt": prompt
                 }
         ) as gpt_response:
             gpt_response_json = await gpt_response.json()
 
-    return float(gpt_response_json['message']['content'].replace(",", "."))
+    return float(gpt_response_json['response'].replace(",", "."))
 
 
 @with_locale('ru_RU.UTF-8')

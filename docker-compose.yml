@@ -1,0 +1,29 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    restart: always
+    volumes:
+      - ./src:/app
+
+#  ollama:
+#      image: ollama/ollama:latest
+#      ports:
+#        - 7869:11434
+#      volumes:
+#        - ./ollama/ollama:/root/.ollama
+#        - ./entrypoint.sh:/entrypoint.sh
+#        - ollama_models:/models
+#      container_name: ollama
+#      pull_policy: always
+#      tty: true
+#      restart: always
+#      environment:
+#        - OLLAMA_KEEP_ALIVE=24h
+#        - OLLAMA_HOST=0.0.0.0
+#        - OLLAMA_MODELS=/models
+#      entrypoint: [ "/usr/bin/bash", "/entrypoint.sh" ]
+
+
+volumes:
+  ollama_models:
