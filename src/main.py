@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 
 QUESTION_HOUR = 17
-QUESTION_MINUTE = 0
+QUESTION_MINUTE = 30
 
 
 async def register(update: Update, context: CallbackContext) -> None:
@@ -171,6 +171,7 @@ async def send_quiz_question(context):
     text = question.get("question", "Кто-то забыл задать сегодняшний вопрос(((")
     for chat_id in active_chats:
         try:
+            await context.bot.send_message(chat_id=int(chat_id), text="Дорогой друг!!! Вот и подошел к концу декабрь а вместе с ним и 2024 год. Желаю тебе в новом году оставаться таким же умным и сексуальным! Спасибо тебе за участие в чгк адвенте, мы вернемся с новыми фичами в 2025 году. С новым годом!!!!!!")
             await context.bot.send_message(chat_id=int(chat_id), text=f"ВОПРОС ДНЯ!!!\n{text}")
         except Exception as e:
             print(f"Failed to send message to chat {chat_id}: {e}")
