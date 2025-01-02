@@ -18,8 +18,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-QUESTION_HOUR = 17
-QUESTION_MINUTE = 30
+QUESTION_HOUR = 8
+QUESTION_MINUTE = 45
 
 
 async def register(update: Update, context: CallbackContext) -> None:
@@ -169,10 +169,12 @@ async def send_quiz_question(context):
     today = now.strftime('%Y-%m-%d')
     question = questions.get(today, {})
     text = question.get("question", "Кто-то забыл задать сегодняшний вопрос(((")
+    image_path = question.get("image")
     for chat_id in active_chats:
         try:
-            await context.bot.send_message(chat_id=int(chat_id), text="Дорогой друг!!! Вот и подошел к концу декабрь а вместе с ним и 2024 год. Желаю тебе в новом году оставаться таким же умным и сексуальным! Спасибо тебе за участие в чгк адвенте, мы вернемся с новыми фичами в 2025 году. С новым годом!!!!!!")
-            await context.bot.send_message(chat_id=int(chat_id), text=f"ВОПРОС ДНЯ!!!\n{text}")
+            await context.bot.send_message(chat_id=int(chat_id), text=f"Рубрика вопрос от подписчика:\n{text}")
+            if image_path:
+                await context.bot.send_photo(chat_id=int(chat_id), photo=open(image_path, 'rb'))
         except Exception as e:
             print(f"Failed to send message to chat {chat_id}: {e}")
 
@@ -248,7 +250,7 @@ def main():
 
     application.add_handler(CommandHandler("advent_start", start_advent))
     application.add_handler(CommandHandler("advent_answer", answer))
-    application.job_queue.run_daily(send_quiz_answers, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE, tzinfo=pytz.utc))
+    # application.job_queue.run_daily(send_quiz_answers, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE, tzinfo=pytz.utc))
     application.job_queue.run_daily(send_quiz_question, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE + 1, tzinfo=pytz.utc))
 
     application.run_polling()
