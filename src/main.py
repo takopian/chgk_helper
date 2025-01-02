@@ -248,8 +248,8 @@ def main():
 
     application.add_handler(CommandHandler("advent_start", start_advent))
     application.add_handler(CommandHandler("advent_answer", answer))
-    application.job_queue.run_daily(send_quiz_answers, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE, tzinfo=pytz.utc))
-    application.job_queue.run_daily(send_quiz_question, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE + 1, tzinfo=pytz.utc))
+    # application.job_queue.run_daily(send_quiz_answers, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE, tzinfo=pytz.utc))
+    # application.job_queue.run_daily(send_quiz_question, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE + 1, tzinfo=pytz.utc))
 
     application.run_polling()
 
