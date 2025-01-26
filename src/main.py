@@ -35,9 +35,10 @@ async def register(update: Update, context: CallbackContext) -> None:
     registered = [
         quiz.poll_text for quiz in chat_data.registered_quizzes
     ]
+    today = datetime.utcnow().date()
     options = [
         quiz for quiz in chat_data.poll_quizzes
-        if quiz.poll_text not in registered and quiz.date > datetime.utcnow()
+        if quiz.poll_text not in registered and quiz.date.date() >= today
     ]
     keyboard = [
         [
@@ -77,7 +78,7 @@ async def get_registered(update: Update, context: CallbackContext) -> None:
     polls_data = PollsData.load()
     chat_data = polls_data.get_or_create_chat_data(chat_id)
     upcoming_games = [
-        quiz.poll_text for quiz in chat_data.registered_quizzes
+        quiz.poll_text for quiz in sorted(chat_data.registered_quizzes, key=lambda x: x.date)
         if quiz.date.date() >= datetime.utcnow().date()
     ]
     if not upcoming_games:
@@ -85,6 +86,21 @@ async def get_registered(update: Update, context: CallbackContext) -> None:
         return
     formatted_list = "\n".join([f"- {quiz}" for quiz in upcoming_games])
     await update.message.reply_text(f"Зарегистрированные игры:\n{formatted_list}.")
+
+
+async def notify_registered(context):
+    today = datetime.utcnow().date()
+    polls_data = PollsData.load()
+    for chat_id, chat_data in polls_data.chats_data.items():
+        for quiz in chat_data.registered_quizzes:
+            if quiz.date.date() == today:
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"Напоминаю: что сегодня состоится игра:\n {quiz.poll_text}",
+                    )
+                except Exception as e:
+                    print(f"Failed to send message to chat {chat_id}: {e}")
 
 
 async def create_poll(update: Update, context) -> None:
@@ -250,6 +266,7 @@ def main():
 
     application.add_handler(CommandHandler("advent_start", start_advent))
     application.add_handler(CommandHandler("advent_answer", answer))
+    application.job_queue.run_daily(notify_registered, time=time(hour=7, minute=0, tzinfo=pytz.utc))
     # application.job_queue.run_daily(send_quiz_answers, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE, tzinfo=pytz.utc))
     # application.job_queue.run_daily(send_quiz_question, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE + 1, tzinfo=pytz.utc))
 
