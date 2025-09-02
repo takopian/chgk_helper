@@ -49,7 +49,7 @@ def parse_date(date_str: str) -> datetime:
 def parse_quizzes(html) -> list[Quiz]:
     soup = BeautifulSoup(html, 'html.parser')
     entry_content = soup.find('div', class_='entry-content')
-    entry_body = entry_content.find('div', class_='entry-body').find('p')
+    entry_body = entry_content.find('div', class_='entry-body')
     quizzes = []
 
     current_date = None
