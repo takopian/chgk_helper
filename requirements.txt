@@ -4,3 +4,6 @@ python-telegram-bot[job-queue]
 beautifulsoup4
 pyyaml
 pytz
+SQLAlchemy>=2.0
+alembic
+asyncpg

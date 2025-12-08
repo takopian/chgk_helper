@@ -1,8 +1,8 @@
 import logging
-import os
 import uuid
 from datetime import datetime, time, timedelta
 import pytz
+import os
 
 import requests
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
@@ -12,7 +12,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext, Ca
 from parser import parse_quizzes
 from quiz import PollsData
 from utils import read_yaml, write_yaml
-from competition import register_handlers, send_daily_questions
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -236,8 +235,8 @@ async def answer(update: Update, context):
         await update.message.reply_text("Сегодняшний вопрос уже был отвечен!")
         return
 
-    answer = " ".join(context.args)
-    ans[today] = {"answer": answer, "is_correct": None}
+    answer_text = " ".join(context.args)
+    ans[today] = {"answer": answer_text, "is_correct": None}
     chat_data[chat_id]["answers"] = ans
     write_yaml("advent_chats.yml", chat_data)
 
@@ -258,19 +257,13 @@ async def post_init(application: Application) -> None:
 def main():
     application = ApplicationBuilder(
     ).token(
-        os.environ.get("POLLS_BOT_TOKEN"),
+        os.environ.get("POLLS_BOT_TOKEN")
     ).post_init(post_init).build()
     application.add_handler(CommandHandler("createpoll", create_poll))
     application.add_handler(CommandHandler("register", register))
     application.add_handler(CommandHandler("upcoming", get_registered))
     application.add_handler(CallbackQueryHandler(handle_register, pattern='^register:'))
     application.job_queue.run_daily(notify_registered, time=time(hour=7, minute=0, tzinfo=pytz.utc))
-
-
-    # application.add_handler(CommandHandler("advent_start", start_advent))
-    # application.add_handler(CommandHandler("advent_answer", answer))
-    # application.job_queue.run_daily(send_quiz_answers, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE, tzinfo=pytz.utc))
-    # application.job_queue.run_daily(send_quiz_question, time=time(hour=QUESTION_HOUR, minute=QUESTION_MINUTE + 1, tzinfo=pytz.utc))
 
     application.run_polling()
 

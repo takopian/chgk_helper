@@ -1,29 +1,75 @@
 version: '3.8'
+
 services:
-  app:
+  polls_bot:
     build: .
     restart: always
+    env_file: .env
+    command: python -m bots.polls_bot
     volumes:
       - ./src:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shared_postgres_net
 
-#  ollama:
-#      image: ollama/ollama:latest
-#      ports:
-#        - 7869:11434
-#      volumes:
-#        - ./ollama/ollama:/root/.ollama
-#        - ./entrypoint.sh:/entrypoint.sh
-#        - ollama_models:/models
-#      container_name: ollama
-#      pull_policy: always
-#      tty: true
-#      restart: always
-#      environment:
-#        - OLLAMA_KEEP_ALIVE=24h
-#        - OLLAMA_HOST=0.0.0.0
-#        - OLLAMA_MODELS=/models
-#      entrypoint: [ "/usr/bin/bash", "/entrypoint.sh" ]
+  admin_bot:
+    build: .
+    restart: always
+    env_file: .env
+    command: python -m bots.admin_bot
+    volumes:
+      - ./src:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shared_postgres_net
 
+  user_bot:
+    build: .
+    restart: always
+    env_file: .env
+    command: python -m bots.user_bot
+    volumes:
+      - ./src:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shared_postgres_net
+    ports:
+      - "8001:8001"
+    environment:
+      WEBHOOK_URL: http://user_bot:8001/webhook/question
+      WEBHOOK_PORT: 8001
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # fallback envs (overridden by .env when present)
+      POSTGRES_USER: ${PG_USERNAME}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DATABASE}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USERNAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Expose the Postgres port to the host so other projects (or the host) can connect
+    ports:
+      - "5432:5432"
+    networks:
+      - shared_postgres_net
 
 volumes:
-  ollama_models:
+  postgres_data:
+
+networks:
+  shared_postgres_net:
+    external: true
