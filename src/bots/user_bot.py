@@ -137,8 +137,9 @@ async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
     recorded = await record_answer(user.id, qid, ans_text)
     # notify admin for manual validation
     if ADMIN_CHAT_ID:
+        username = update.effective_user.username or update.effective_user.id
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton('✓ Правильно', callback_data=f'validate:correct:{recorded.id}'), InlineKeyboardButton('✗ Неправильно', callback_data=f'validate:wrong:{recorded.id}')]])
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f'Пользователь {update.effective_user.id} ответил на вопрос {qid}: "{ans_text}"', reply_markup=keyboard)
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f'Пользователь {username} ответил на вопрос {qid}: "{ans_text}"', reply_markup=keyboard)
     
     # Get and show the correct answer
     async with async_session() as session:
