@@ -43,7 +43,8 @@ async def get_difficulty(link):
 def parse_date(date_str: str) -> datetime:
     logging.info(date_str)
     date_str = " ".join(date_str.split()[:-1])
-    return datetime.strptime(date_str + " 2025", FORMAT)
+    year = datetime.now().year
+    return datetime.strptime(date_str + f" {str(year)}", FORMAT)
 
 
 def parse_quizzes(html) -> list[Quiz]:
