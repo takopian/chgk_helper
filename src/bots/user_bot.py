@@ -2,7 +2,7 @@ import logging
 import os
 from datetime import date, time, datetime
 import pytz
-import asyncio
+import aiohttp
 from aiohttp import web
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
@@ -24,6 +24,7 @@ logging.basicConfig(
 )
 
 ADMIN_CHAT_ID = int(os.environ.get('ADMIN_CHAT_ID', '0'))
+PARSER_BASE_URL = os.environ.get('PARSER_BASE_URL', '')
 MSK = pytz.timezone('Europe/Moscow')
 
 
@@ -52,19 +53,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def user_register_competition(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Step 1: Show list of active competitions as buttons
     when = datetime.now(MSK).date()
+
+    # Ensure we have a user record to check registrations
+    user = await get_or_create_user(update.effective_user.id, update.effective_user.username or '')
+
     async with async_session() as session:
         res = await session.execute(
             select(Competition).where(Competition.start_date <= when, Competition.end_date >= when)
         )
         active_comps = res.scalars().all()
 
+        # Fetch user's existing registrations
+        regs_res = await session.execute(
+            select(UsersRegistrations).where(UsersRegistrations.user_id == user.id)
+        )
+        regs = regs_res.scalars().all()
+        registered_comp_ids = {r.competition_id for r in regs}
+
     if not active_comps:
         await update.message.reply_text('Нет активных турниров.')
         return
 
-    keyboard = [[InlineKeyboardButton(c.name, callback_data=f'reg_comp:{c.id}')] for c in active_comps]
+    # Filter out competitions the user already registered for
+    unregistered = [c for c in active_comps if c.id not in registered_comp_ids]
+
+    if not unregistered:
+        # User is registered for all active competitions
+        registered_names = ', '.join([c.name for c in active_comps if c.id in registered_comp_ids])
+        if registered_names:
+            await update.message.reply_text(f'Вы уже зарегистрированы на активные турниры: {registered_names}')
+        else:
+            await update.message.reply_text('Вы уже зарегистрированы на все активные турниры.')
+        return
+
+    keyboard = [[InlineKeyboardButton(c.name, callback_data=f'reg_comp:{c.id}')] for c in unregistered]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('Выберите турнир для регистрации:', reply_markup=reply_markup)
+
+    if registered_comp_ids:
+        registered_names = ', '.join([c.name for c in active_comps if c.id in registered_comp_ids])
+        await update.message.reply_text(f'Выберите турнир для регистрации:\n(Уже зарегистрированы: {registered_names})', reply_markup=reply_markup)
+    else:
+        await update.message.reply_text('Выберите турнир для регистрации:', reply_markup=reply_markup)
 
 
 async def register_competition_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,13 +113,8 @@ async def register_competition_callback(update: Update, context: ContextTypes.DE
 
 
 async def submit_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # New flow: user issues /submit_answer -> bot finds today's question for user's registrations,
-    # sends the question and waits for the user's text reply.
-    # If there is no question for today, inform the user.
-    # find or create local user record
     user = await get_or_create_user(update.effective_user.id, update.effective_user.username or '')
 
-    # find user's registered competitions and today's question (using MSK timezone)
     when = datetime.now(MSK).date()
     q_found = None
     async with async_session() as session:
@@ -119,6 +143,13 @@ async def submit_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # send today's question and set state to await answer
+    if q_found.image_path:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(PARSER_BASE_URL +q_found.image_path) as resp:
+                if resp.status != 200:
+                    await update.message.reply_text('Ошибка при загрузке изображения вопроса.')
+                    return
+                await update.message.reply_photo(photo=await resp.read())
     await update.message.reply_text(f"Вопрос дня:\n{q_found.body}")
     context.user_data['submit_q_id'] = q_found.id
     context.user_data['submit_step'] = 'await_answer'

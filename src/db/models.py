@@ -38,6 +38,8 @@ class Competition(Base):
     name = Column(String(512), nullable=False)
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
+    # type: 0 uses question pool, 1 uses scheduled questions
+    competition_type = Column(Integer, nullable=False)
 
     questions = relationship('Question', back_populates='competition', cascade='all, delete-orphan')
     registrations = relationship('UsersRegistrations', back_populates='competition', cascade='all, delete-orphan')
@@ -61,6 +63,23 @@ class Question(Base):
 
     def __repr__(self) -> str:
         return f"<Question id={self.id} competition_id={self.competition_id}>"
+
+
+class QuestionPool(Base):
+    __tablename__ = 'question_pool'
+
+    id = Column(Integer, primary_key=True)
+    body = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    handout = Column(Text, nullable=True)
+    comment = Column(Text, nullable=True)
+    image_path = Column(String(1024), nullable=True)
+    source_pack = Column(String(512), nullable=True)
+    added_at = Column(DateTime(timezone=True), server_default=func.now())
+    used = Column(Boolean, nullable=False, server_default='false')
+
+    def __repr__(self) -> str:
+        return f"<QuestionPool id={self.id} used={self.used} source={self.source_pack}>"
 
 
 class UsersRegistrations(Base):

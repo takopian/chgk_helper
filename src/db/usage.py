@@ -5,7 +5,8 @@ from .models import User, Base
 from sqlalchemy import select
 from sqlalchemy import insert
 from datetime import date
-from .models import Competition, Question, UsersRegistrations, Answer
+from .models import Competition, Question, UsersRegistrations, Answer, QuestionPool
+from sqlalchemy import func
 
 
 # async def init_db():
@@ -37,9 +38,9 @@ async def get_or_create_user(tg_id: int, username: str):
         await session.refresh(user)
         return user
     
-async def create_competition(name: str, start_date: date, end_date: date):
+async def create_competition(name: str, start_date: date, end_date: date, competition_type: int = 0):
     async with async_session() as session:
-        comp = Competition(name=name, start_date=start_date, end_date=end_date)
+        comp = Competition(name=name, start_date=start_date, end_date=end_date, competition_type=competition_type)
         session.add(comp)
         await session.commit()
         await session.refresh(comp)
@@ -109,14 +110,41 @@ async def get_todays_question_for_competition(competition_id: int, when: date | 
         return result.scalars().first()
 
 
-
-# async def main():
-#     # await init_db()
-#     u = await create_user('bot_user')
-#     print(u)
-#     u2 = await get_or_create_user(123456, 'bot_user')
-#     print(u2)
+async def get_unasked_pool_count():
+    async with async_session() as session:
+        result = await session.execute(select(func.count()).select_from(QuestionPool).where(QuestionPool.used == False))
+        return int(result.scalar() or 0)
 
 
-# if __name__ == '__main__':
-#     asyncio.run(main())
+async def get_all_present_packs() -> list[str]:
+    async with async_session() as session:
+        result = await session.execute(select(QuestionPool.source_pack).distinct())
+        return [row[0] for row in result.fetchall() if row[0] is not None]
+
+
+async def add_pool_question(body: str, answer_text: str | None = None, handout: str | None = None, comment: str | None = None, image_path: str | None = None, source_pack: str | None = None):
+    async with async_session() as session:
+        # check duplicate by body+source_pack
+        q = await session.execute(select(QuestionPool).where(QuestionPool.body == body, QuestionPool.source_pack == source_pack))
+        existing = q.scalars().first()
+        if existing:
+            return existing
+        pool_q = QuestionPool(body=body, answer=answer_text, handout=handout, comment=comment, image_path=image_path, source_pack=source_pack)
+        session.add(pool_q)
+        await session.commit()
+        await session.refresh(pool_q)
+        return pool_q
+
+
+async def pop_random_pool_question_and_mark_used():
+    async with async_session() as session:
+        # select random unused question
+        result = await session.execute(select(QuestionPool).where(QuestionPool.used == False).order_by(func.random()).limit(1))
+        pool_q = result.scalars().first()
+        if not pool_q:
+            return None
+        pool_q.used = True
+        session.add(pool_q)
+        await session.commit()
+        await session.refresh(pool_q)
+        return pool_q

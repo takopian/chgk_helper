@@ -12,7 +12,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext, Ca
 from parser import parse_quizzes
 from quiz import PollsData
 from utils import read_yaml, write_yaml
-from competition import register_handlers, send_daily_questions
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

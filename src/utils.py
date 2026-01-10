@@ -2,6 +2,7 @@ import locale
 import logging
 from datetime import datetime
 
+import aiohttp
 import yaml
 
 FORMAT = "%d %B %Y"
@@ -37,3 +38,13 @@ def read_yaml(path):
 def write_yaml(path, data):
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, default_flow_style=False)
+
+
+async def fetch(session: aiohttp.ClientSession, url: str) -> str | None:
+    try:
+        async with session.get(url, timeout=20) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.text()
+    except Exception as e:
+        return None

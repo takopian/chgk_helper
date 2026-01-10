@@ -12,8 +12,12 @@ from db.usage import (
     add_question,
     async_session,
 )
+from db.usage import get_unasked_pool_count, get_all_present_packs, add_pool_question, pop_random_pool_question_and_mark_used, add_question, get_unasked_pool_count, get_todays_question_for_competition
+
 from db.models import Competition, Answer as AnswerModel
 from sqlalchemy import select
+from parser import get_packs_by_complexity_sync, parse_pack_questions
+from utils import fetch
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -22,6 +26,7 @@ logging.basicConfig(
 
 ADMIN_CHAT_ID = int(os.environ.get('ADMIN_CHAT_ID', '0'))
 PERMITTED_ADMIN_TG_ID = int(os.environ.get('PERMITTED_ADMIN_TG_ID', '0'))
+PARSER_BASE_URL = os.environ.get('PARSER_BASE_URL', '')
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'http://user_bot:8001/webhook/question')
 MSK = pytz.timezone('Europe/Moscow')
 
@@ -50,17 +55,18 @@ async def admin_create_competition(update: Update, context: ContextTypes.DEFAULT
         return
     # expected: /create_competition name|YYYY-MM-DD|YYYY-MM-DD
     if not context.args:
-        await update.message.reply_text('Использование: /create_competition название|YYYY-MM-DD|YYYY-MM-DD')
+        await update.message.reply_text('Использование: /create_competition название|YYYY-MM-DD|YYYY-MM-DD[|type] (0 - пул, 1 - вручную)')
         return
     payload = ' '.join(context.args)
     parts = payload.split('|')
-    if len(parts) != 3:
-        await update.message.reply_text('Использование: /create_competition название|YYYY-MM-DD|YYYY-MM-DD')
+    if len(parts) not in (3, 4):
+        await update.message.reply_text('Использование: /create_competition название|YYYY-MM-DD|YYYY-MM-DD[|type]')
         return
-    name, start_s, end_s = parts
+    name, start_s, end_s = parts[0], parts[1], parts[2]
+    competition_type = int(parts[3].strip()) if len(parts) == 4 else '0'
     start_date = date.fromisoformat(start_s.strip())
     end_date = date.fromisoformat(end_s.strip())
-    comp = await create_competition(name.strip(), start_date, end_date)
+    comp = await create_competition(name.strip(), start_date, end_date, competition_type=competition_type)
     await update.message.reply_text(f'Турнир "{comp.name}" создан')
 
 
@@ -146,11 +152,82 @@ async def add_question_handle_step(update: Update, context: ContextTypes.DEFAULT
         return
 
 
+async def refill_pool_job(context):
+    current = await get_unasked_pool_count()
+    if current >= 500:
+        logging.info(f'Pool has sufficient questions: {current} >= {500}')
+        return
+    
+    added = 0
+    present_packs = await get_all_present_packs()
+    async with aiohttp.ClientSession() as session:
+        main_html = await fetch(session, PARSER_BASE_URL)
+        if not main_html:
+            logging.error('Failed to fetch main parser page for pool refill')
+            return
+        packs_links = get_packs_by_complexity_sync(main_html)
+        for pack_url in packs_links:
+            if pack_url in present_packs:
+                continue
+            html = await fetch(session, PARSER_BASE_URL + pack_url)
+            if not html:
+                continue
+            parsed = parse_pack_questions(html)
+            logging.info(f'Parsed {len(parsed)} questions from {pack_url} for pool refill')
+            for q in parsed:
+                try:
+                    await add_pool_question(q['body'], q.get('answer'), q.get('handout'), q.get('comment'), q.get('image_path'), pack_url)
+                    added += 1
+                except Exception:
+                    logging.exception(f'Failed to add pool question from {pack_url}')
+
+    new_count = await get_unasked_pool_count()
+    msg = f'Автозаполнение пула завершено: добавлено {added} вопросов. Текущий размер пула: {new_count}.'
+    if ADMIN_CHAT_ID:
+        try:
+            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg)
+        except Exception as e:
+            logging.error(f'Failed to notify admin about pool refill: {e}')
+
+
+async def distribute_random_questions_job(context: ContextTypes.DEFAULT_TYPE):
+    when = datetime.now(MSK).date()
+    async with async_session() as session:
+        res = await session.execute(
+            select(Competition).where(Competition.start_date <= when, Competition.end_date >= when, Competition.competition_type == 0)
+        )
+        comps = res.scalars().all()
+
+    for comp in comps:
+        q = await get_todays_question_for_competition(comp.id, when)
+        if q:
+            continue
+
+        pool_q = await pop_random_pool_question_and_mark_used()
+        if not pool_q:
+            logging.info('Pool empty, cannot assign question for %s', comp.name)
+            continue
+
+        try:
+            if pool_q.handout:
+                body = "Раздаточный материал:\n" + pool_q.handout + '\n' + pool_q.body + '\n' + 'Комментарий:\n' + pool_q.comment
+            else:
+                body = pool_q.body + '\n' + 'Комментарий:\n' + pool_q.comment
+            await add_question(comp.id, body, pool_q.answer, pool_q.image_path, when)
+        except Exception as e:
+            logging.exception('Failed to add pooled question to competition %s: %s', comp.id, e)
+            continue
+
+        await notify_user_bot_webhook(comp.id, comp.name)
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("create_competition", "Создать турнир (админ). Формат: /create_competition название|YYYY-MM-DD|YYYY-MM-DD"),
         BotCommand("add_question", "Добавить вопрос к турниру (админ)."),
     ])
+    application.job_queue.run_daily(refill_pool_job, time=time(hour=9, minute=0, tzinfo=MSK))
+    application.job_queue.run_daily(distribute_random_questions_job, time=time(hour=11, minute=0, tzinfo=MSK))
 
 
 def main():
