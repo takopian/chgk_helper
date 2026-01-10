@@ -15,7 +15,7 @@ from db.usage import (
     record_answer,
     async_session,
 )
-from db.models import Competition, UsersRegistrations, User, Answer as AnswerModel
+from db.models import Competition, UsersRegistrations, User, Answer as AnswerModel, Question
 from sqlalchemy import select, func
 
 logging.basicConfig(
@@ -210,13 +210,24 @@ async def validate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Show leaderboard: users ranked by correct answer count
+    # Show leaderboard for the single active competition
+    when = datetime.now(MSK).date()
     async with async_session() as session:
-        # Query: count correct answers per user, ordered by count descending
+        # Find active competition (there should be at most one)
+        res = await session.execute(
+            select(Competition).where(Competition.start_date <= when, Competition.end_date >= when)
+        )
+        comp = res.scalars().first()
+
+        if not comp:
+            await update.message.reply_text('Нет активных турниров.')
+            return
+
         result = await session.execute(
             select(User.username, func.count(AnswerModel.id).label('correct_count'))
             .join(AnswerModel, User.id == AnswerModel.user_id)
-            .where(AnswerModel.is_correct == True)
+            .join(Question, AnswerModel.question_id == Question.id)
+            .where(AnswerModel.is_correct == True, Question.competition_id == comp.id)
             .group_by(User.id, User.username)
             .order_by(func.count(AnswerModel.id).desc())
         )
@@ -227,20 +238,20 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Build leaderboard message with tied ranks
-    msg = '🏆 Рейтинг 🏆\n\n'
-    
+    msg = f'🏆 Рейтинг — {comp.name} 🏆\n\n'
+
     # Group users by score
     score_groups = {}
     for username, count in leaderboard_data:
         if count not in score_groups:
             score_groups[count] = []
         score_groups[count].append(username)
-    
+
     # Sort by score descending and assign ranks
     rank = 1
     for score in sorted(score_groups.keys(), reverse=True):
         users = score_groups[score]
-        
+
         # Determine medal
         if rank == 1:
             medal = '🥇'
@@ -250,12 +261,10 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
             medal = '🥉'
         else:
             medal = f'{rank}.'
-        
-        # Format users with same score
+
         users_str = ', '.join(users)
         msg += f'{medal} {users_str}: {score}\n'
-        
-        # Next rank is current rank + number of users tied at this rank
+
         rank += len(users)
 
     await update.message.reply_text(msg)
