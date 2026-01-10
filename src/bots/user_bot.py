@@ -315,6 +315,41 @@ async def handle_question_webhook(request):
         return web.Response(text=f'Error: {str(e)}', status=500)
 
 
+async def handle_competition_webhook(request):
+    """Webhook endpoint that receives competition creation notifications from admin bot."""
+    try:
+        data = await request.json()
+        competition_id = data.get('competition_id')
+        competition_name = data.get('competition_name')
+
+        if not competition_id or not competition_name:
+            return web.Response(text='Missing competition_id or competition_name', status=400)
+
+        app = request.app['application']
+
+        # Notify all users about the new competition
+        async with async_session() as session:
+            from db.models import User as UserModel
+            res = await session.execute(select(UserModel).where(UserModel.tg_id != None))
+            users = res.scalars().all()
+
+            for user in users:
+                if user and user.tg_id:
+                    try:
+                        await app.bot.send_message(
+                            chat_id=user.tg_id,
+                            text=(f"📢 Новый турнир '{competition_name}' создан!\n"
+                                  "Используйте /register_competition чтобы зарегистрироваться.")
+                        )
+                    except Exception as e:
+                        logging.error(f"Failed to send competition notification to user {user.tg_id}: {e}")
+
+        return web.Response(text='OK', status=200)
+    except Exception as e:
+        logging.error(f"Competition webhook error: {e}")
+        return web.Response(text=f'Error: {str(e)}', status=500)
+
+
 def main():
     application = ApplicationBuilder(
     ).token(
@@ -335,11 +370,13 @@ def main():
     # Setup HTTP webhook server for admin bot notifications
     webhook_port = int(os.environ.get('WEBHOOK_PORT', '8001'))
     webhook_path = '/webhook/question'
+    competition_webhook_path = '/webhook/competition'
     
     # Create aiohttp app for webhook
     webhook_app = web.Application()
     webhook_app['application'] = application
     webhook_app.router.add_post(webhook_path, handle_question_webhook)
+    webhook_app.router.add_post(competition_webhook_path, handle_competition_webhook)
     
     # Setup webhook server as a background task
     async def start_webhook_server(context):

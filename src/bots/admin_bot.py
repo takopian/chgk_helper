@@ -28,6 +28,8 @@ ADMIN_CHAT_ID = int(os.environ.get('ADMIN_CHAT_ID', '0'))
 PERMITTED_ADMIN_TG_ID = int(os.environ.get('PERMITTED_ADMIN_TG_ID', '0'))
 PARSER_BASE_URL = os.environ.get('PARSER_BASE_URL', '')
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'http://user_bot:8001/webhook/question')
+WEBHOOK_COMPETITION_URL = os.environ.get('WEBHOOK_COMPETITION_URL', 'http://user_bot:8001/webhook/competition')
+
 MSK = pytz.timezone('Europe/Moscow')
 
 
@@ -46,6 +48,24 @@ async def notify_user_bot_webhook(competition_id: int, competition_name: str):
                     logging.warning(f"User bot webhook returned status {resp.status}")
     except Exception as e:
         logging.error(f"Failed to notify user bot via webhook: {e}")
+
+
+async def notify_user_bot_competition_webhook(competition_id: int, competition_name: str):
+    """Send notification to user bot via webhook when a competition is created."""
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                'competition_id': competition_id,
+                'competition_name': competition_name
+            }
+            async with session.post(WEBHOOK_COMPETITION_URL, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    logging.info(f"Successfully notified user bot about competition {competition_id}")
+                else:
+                    logging.warning(f"User bot competition webhook returned status {resp.status}")
+    except Exception as e:
+        logging.error(f"Failed to notify user bot via competition webhook: {e}")
 
 
 async def admin_create_competition(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68,6 +88,11 @@ async def admin_create_competition(update: Update, context: ContextTypes.DEFAULT
     end_date = date.fromisoformat(end_s.strip())
     comp = await create_competition(name.strip(), start_date, end_date, competition_type=competition_type)
     await update.message.reply_text(f'Турнир "{comp.name}" создан')
+    # Notify user bot about newly created competition
+    try:
+        await notify_user_bot_competition_webhook(comp.id, comp.name)
+    except Exception as e:
+        logging.error(f"Failed to notify user bot about new competition: {e}")
 
 
 async def admin_add_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
