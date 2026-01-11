@@ -232,13 +232,12 @@ async def distribute_random_questions_job(context: ContextTypes.DEFAULT_TYPE):
         if not pool_q:
             logging.info('Pool empty, cannot assign question for %s', comp.name)
             continue
-
+        answer = pool_q.answer + '\n\n' + 'Комментарий:\n' + pool_q.comment
+        body = pool_q.body
+        if pool_q.handout:
+            body = "Раздаточный материал:\n" + pool_q.handout + '\n\n' + body
         try:
-            if pool_q.handout:
-                body = "Раздаточный материал:\n" + pool_q.handout + '\n' + pool_q.body + '\n' + 'Комментарий:\n' + pool_q.comment
-            else:
-                body = pool_q.body + '\n' + 'Комментарий:\n' + pool_q.comment
-            await add_question(comp.id, body, pool_q.answer, pool_q.image_path, when)
+            await add_question(comp.id, body, answer, pool_q.image_path, when)
         except Exception as e:
             logging.exception('Failed to add pooled question to competition %s: %s', comp.id, e)
             continue
@@ -251,8 +250,8 @@ async def post_init(application: Application) -> None:
         BotCommand("create_competition", "Создать турнир (админ). Формат: /create_competition название|YYYY-MM-DD|YYYY-MM-DD"),
         BotCommand("add_question", "Добавить вопрос к турниру (админ)."),
     ])
-    application.job_queue.run_daily(refill_pool_job, time=time(hour=9, minute=0, tzinfo=MSK))
-    application.job_queue.run_daily(distribute_random_questions_job, time=time(hour=11, minute=0, tzinfo=MSK))
+    application.job_queue.run_daily(refill_pool_job, time=time(hour=11, minute=30, tzinfo=MSK))
+    application.job_queue.run_daily(distribute_random_questions_job, time=time(hour=12, minute=0, tzinfo=MSK))
 
 
 def main():
