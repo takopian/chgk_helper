@@ -6,6 +6,7 @@ import aiohttp
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ApplicationBuilder, Application
+from telegram.request import HTTPXRequest
 
 from db.usage import (
     create_competition,
@@ -255,9 +256,19 @@ async def post_init(application: Application) -> None:
 
 
 def main():
+    request = HTTPXRequest(
+        read_timeout=30.0,
+        write_timeout=30.0,
+        connect_timeout=10.0,
+        pool_timeout=5.0,
+        media_write_timeout=60.0,
+    )
+
     application = ApplicationBuilder(
     ).token(
         os.environ.get("ADMIN_BOT_TOKEN")
+    ).request(
+        request
     ).post_init(post_init).build()
     application.add_handler(CommandHandler('create_competition', admin_create_competition))
     application.add_handler(CommandHandler('add_question', admin_add_question))
