@@ -165,7 +165,18 @@ async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ans_text = update.message.text
     # find user by tg id
     user = await get_or_create_user(update.effective_user.id, update.effective_user.username or '')
-    recorded = await record_answer(user.id, qid, ans_text)
+    # Double-check whether an answer for this user+question already exists
+    async with async_session() as session:
+        recorded_q = await session.execute(
+            select(AnswerModel).where(
+                AnswerModel.user_id == user.id,
+                AnswerModel.question_id == qid
+            )
+        )
+        recorded = recorded_q.scalars().first()
+    if not recorded:
+        recorded = await record_answer(user.id, qid, ans_text)
+
     # notify admin for manual validation
     if ADMIN_CHAT_ID:
         username = update.effective_user.username or update.effective_user.id
