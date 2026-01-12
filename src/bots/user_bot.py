@@ -7,6 +7,7 @@ from aiohttp import web
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ApplicationBuilder, Application
+from telegram.request import HTTPXRequest
 
 from db.usage import (
     register_user,
@@ -371,9 +372,19 @@ async def handle_competition_webhook(request):
 
 
 def main():
+    request = HTTPXRequest(
+        read_timeout=30.0,
+        write_timeout=30.0,
+        connect_timeout=10.0,
+        pool_timeout=5.0,
+        media_write_timeout=60.0,
+    )
+
     application = ApplicationBuilder(
     ).token(
         os.environ.get("USER_BOT_TOKEN")
+    ).request(
+        request
     ).post_init(post_init).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('register_competition', user_register_competition))
