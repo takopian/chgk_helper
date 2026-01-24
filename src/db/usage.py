@@ -15,15 +15,6 @@ from sqlalchemy import func
 #         await conn.run_sync(Base.metadata.create_all)
 
 
-async def create_user(username: str):
-    async with async_session() as session:
-        user = User(username=username)
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
-        return user
-
-
 
 
 async def get_or_create_user(tg_id: int, username: str):

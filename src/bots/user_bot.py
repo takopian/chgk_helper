@@ -182,7 +182,7 @@ async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if ADMIN_CHAT_ID:
         username = update.effective_user.username or update.effective_user.id
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton('✓ Правильно', callback_data=f'validate:correct:{recorded.id}'), InlineKeyboardButton('✗ Неправильно', callback_data=f'validate:wrong:{recorded.id}')]])
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f'Пользователь {username} ответил на вопрос {qid}: "{ans_text}"', reply_markup=keyboard)
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f'Пользователь {username} ответил на вопрос {qid}: "<tg-spoiler>{ans_text}</tg-spoiler>"', reply_markup=keyboard, parse_mode='HTML')
     
     # Get and show the correct answer
     async with async_session() as session:
@@ -211,14 +211,18 @@ async def validate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_correct = True if which == 'correct' else False
     # update Answer.is_correct in DB
     async with async_session() as session:
-        a = await session.get(AnswerModel, ans_id)
+        a: AnswerModel = await session.get(AnswerModel, ans_id)
         if a:
             a.is_correct = is_correct
+            user: User = await session.get(User, a.user_id)
             session.add(a)
             await session.commit()
-
-    status_text = 'правильно' if which == 'correct' else 'неправильно'
-    await query.edit_message_text(f'Ответ {ans_id} отмечен как {status_text}')
+        else:
+            await query.edit_message_text('Ответ не найден в базе данных.')
+            return
+        status_text = 'Правильно' if which == 'correct' else 'Неправильно'
+        text = f'{status_text}: Ответ {user.username} на вопрос {a.question_id}: "{a.answer}"'
+    await query.edit_message_text(text)
 
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -289,6 +293,61 @@ async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await submit_answer_save(update, context)
         return
 
+async def send_answer_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send reminders to users who haven't answered today's question in active competitions."""
+    try:
+        when = datetime.now(MSK).date()
+        
+        async with async_session() as session:
+            # Find active competitions
+            res = await session.execute(
+                select(Competition).where(Competition.start_date <= when, Competition.end_date >= when)
+            )
+            active_comps = res.scalars().all()
+            
+            if not active_comps:
+                return
+            
+            # For each active competition
+            for comp in active_comps:
+                # Get today's question for this competition
+                q = await get_todays_question_for_competition(comp.id, when)
+                if not q:
+                    continue
+                
+                # Get all users registered for this competition
+                regs_res = await session.execute(
+                    select(UsersRegistrations).where(UsersRegistrations.competition_id == comp.id)
+                )
+                registrations = regs_res.scalars().all()
+                
+                for reg in registrations:
+                    # Check if user has already answered
+                    answer_res = await session.execute(
+                        select(AnswerModel).where(
+                            AnswerModel.user_id == reg.user_id,
+                            AnswerModel.question_id == q.id
+                        )
+                    )
+                    if answer_res.scalars().first():
+                        # User already answered
+                        continue
+                    
+                    # Get user and send reminder
+                    user = await session.get(User, reg.user_id)
+                    if user and user.tg_id:
+                        try:
+                            await context.bot.send_message(
+                                chat_id=user.tg_id,
+                                text=f"⏰ Напоминание: вы еще не ответили на вопрос турнира '{comp.name}'!\n\n"
+                                     f"Используйте /submit_answer чтобы ответить на вопрос дня."
+                            )
+                        except Exception as e:
+                            logging.error(f"Failed to send reminder to user {user.tg_id}: {e}")
+    except Exception as e:
+        logging.error(f"Error in send_answer_reminders: {e}")
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("start", "Показать справку и инструкции."),
@@ -296,6 +355,13 @@ async def post_init(application: Application) -> None:
         BotCommand("submit_answer", "Ответить на вопрос дня."),
         BotCommand("leaderboard", "Показать рейтинг участников по правильным ответам."),
     ])
+    
+    # Schedule daily reminder at 10 PM MSK
+    application.job_queue.run_daily(
+        send_answer_reminders,
+        time=time(22, 0, 0, tzinfo=MSK),
+        name='daily_answer_reminder'
+    )
 
 
 async def handle_question_webhook(request):
