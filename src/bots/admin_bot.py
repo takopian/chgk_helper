@@ -252,7 +252,7 @@ async def post_init(application: Application) -> None:
         BotCommand("add_question", "Добавить вопрос к турниру (админ)."),
     ])
     application.job_queue.run_daily(refill_pool_job, time=time(hour=9, minute=0, tzinfo=MSK))
-    application.job_queue.run_daily(distribute_random_questions_job, time=time(hour=19, minute=00, tzinfo=MSK))
+    application.job_queue.run_daily(distribute_random_questions_job, time=time(hour=11, minute=00, tzinfo=MSK))
 
 
 def main():
