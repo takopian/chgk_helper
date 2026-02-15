@@ -249,8 +249,6 @@ async def post_init(application: Application) -> None:
         BotCommand("createpoll", "Создать опрос на базе последнего анонса игр."),
         BotCommand("register", "Отметить игру, на которую была произведена регистрация."),
         BotCommand("upcoming", "Получить список игр, на которые была произведена регистрация."),
-        BotCommand("advent_start", "Жми!!!"),
-        BotCommand("advent_answer", "Ответить на вопрос. Зажмите кнопку, чтобы кайфануть"),
     ])
 
 
