@@ -180,8 +180,8 @@ async def add_question_handle_step(update: Update, context: ContextTypes.DEFAULT
 
 async def refill_pool_job(context):
     current = await get_unasked_pool_count()
-    if current >= 500:
-        logging.info(f'Pool has sufficient questions: {current} >= {500}')
+    if current >= 1000:
+        logging.info(f'Pool has sufficient questions: {current} >= {1000}')
         return
     
     added = 0

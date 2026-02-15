@@ -132,6 +132,7 @@ def parse_pack_questions(html: str):
         for match in matches:
             try:
                 match = match.replace('\\"', '"')[:-1]
+                match = match.replace('\\"', '"')
                 qs = json.loads(match)
                 if isinstance(qs, list):
                     raw_questions.extend(qs)
