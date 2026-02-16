@@ -119,7 +119,12 @@ async def submit_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     when = datetime.now(MSK).date()
     q_found = None
     async with async_session() as session:
-        res = await session.execute(select(UsersRegistrations).where(UsersRegistrations.user_id == user.id))
+        res = await session.execute(
+            select(UsersRegistrations)
+            .join(Competition, UsersRegistrations.competition_id == Competition.id)
+            .where(UsersRegistrations.user_id == user.id)
+            .where(Competition.start_date <= when, Competition.end_date >= when)
+        )
         regs = res.scalars().all()
         for r in regs:
             q = await get_todays_question_for_competition(r.competition_id, when)
