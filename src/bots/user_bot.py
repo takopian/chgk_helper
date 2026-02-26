@@ -157,8 +157,9 @@ async def submit_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text('Ошибка при загрузке изображения вопроса.')
                     return
                 await update.message.reply_photo(photo=await resp.read())
-    # Decode all escape sequences (\n, \t, \r, etc.)
-    await update.message.reply_text(f"Вопрос дня:\n{q_found.body}")
+    # Unescape literal backslash-escaped characters from database
+    body_text = q_found.body.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
+    await update.message.reply_text(f"Вопрос дня:\n{body_text}")
     context.user_data['submit_q_id'] = q_found.id
     context.user_data['submit_step'] = 'await_answer'
 
@@ -196,7 +197,8 @@ async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
         from db.models import Question
         question = await session.get(Question, qid)
         if question:
-            correct_answer_msg = f'Ваш ответ: "{ans_text}"\n\n✅ Правильный ответ: "{question.answer}"'
+            answer_text = question.answer.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
+            correct_answer_msg = f'Ваш ответ: "{ans_text}"\n\n✅ Правильный ответ: "{answer_text}"'
         else:
             correct_answer_msg = f'Ваш ответ: "{ans_text}"'
     
