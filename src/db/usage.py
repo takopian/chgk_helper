@@ -5,14 +5,11 @@ from .models import User, Base
 from sqlalchemy import select
 from sqlalchemy import insert
 from datetime import date
-from .models import Competition, Question, UsersRegistrations, Answer, QuestionPool
 from sqlalchemy import func
+from .models import Competition, Question, UsersRegistrations, Answer, QuestionPool, Author, Tournament, QuestionFeedback, question_authors, question_tournaments
+from sqlalchemy import text
+from pathlib import Path
 
-
-# async def init_db():
-#     # create tables (useful for tests or non-migration setups)
-#     async with async_engine.begin() as conn:
-#         await conn.run_sync(Base.metadata.create_all)
 
 
 
@@ -38,7 +35,7 @@ async def create_competition(name: str, start_date: date, end_date: date, compet
         return comp
 
 
-async def add_question(competition_id: int, body: str, answer_text: str, image_path: str | None = None, q_date: date | None = None):
+async def add_question(competition_id: int, body: str, answer_text: str, image_path: str | None = None, q_date: date | None = None, qid: int | None = None):
     # Ensure date is provided; default to today's date (server local)
     if q_date is None:
         q_date = date.today()
@@ -50,8 +47,16 @@ async def add_question(competition_id: int, body: str, answer_text: str, image_p
         )
         if existing.scalars().first():
             raise ValueError(f"Question for competition {competition_id} on {q_date} already exists")
-
-        q = Question(competition_id=competition_id, body=body, answer=answer_text, image_path=image_path, date=q_date)
+        kwargs = {
+            'competition_id': competition_id,
+            'body': body,
+            'answer': answer_text,
+            'image_path': image_path,
+            'date': q_date
+        }
+        if qid is not None:
+            kwargs['id'] = qid
+        q = Question(**kwargs)
         session.add(q)
         await session.commit()
         await session.refresh(q)
@@ -113,7 +118,16 @@ async def get_all_present_packs() -> list[str]:
         return [row[0] for row in result.fetchall() if row[0] is not None]
 
 
-async def add_pool_question(body: str, answer_text: str | None = None, handout: str | None = None, comment: str | None = None, image_path: str | None = None, source_pack: str | None = None):
+async def add_pool_question(
+    body: str,
+    answer_text: str | None = None,
+    handout: str | None = None,
+    comment: str | None = None,
+    image_path: str | None = None,
+    authors: list[dict] | None = None,
+    tournaments: list[dict] | None = None,
+    source_pack: str | None = None,
+):
     async with async_session() as session:
         # check duplicate by body+source_pack
         q = await session.execute(select(QuestionPool).where(QuestionPool.body == body, QuestionPool.source_pack == source_pack))
@@ -122,6 +136,70 @@ async def add_pool_question(body: str, answer_text: str | None = None, handout: 
             return existing
         pool_q = QuestionPool(body=body, answer=answer_text, handout=handout, comment=comment, image_path=image_path, source_pack=source_pack)
         session.add(pool_q)
+
+        # flush to get pool_q.id for associations
+        await session.flush()
+
+        # handle authors
+        if authors:
+            for a in authors:
+                # expected structure: {'id': 13123, 'name': 'Павел Клепиков', 'gender': 'HE'}
+                aid = a.get('id')
+                name = a.get('name')
+                author_obj = None
+                if aid is not None:
+                    author_obj = await session.get(Author, aid)
+                    if author_obj and name and author_obj.name != name:
+                        author_obj.name = name
+                if author_obj is None and name:
+                    result = await session.execute(select(Author).where(Author.name == name))
+                    author_obj = result.scalars().first()
+                if author_obj is None:
+                    # create author (respect provided id if present)
+                    if aid is not None:
+                        author_obj = Author(id=aid, name=name)
+                    else:
+                        author_obj = Author(name=name)
+                    session.add(author_obj)
+                    await session.flush()
+
+                # insert association if not exists
+                if author_obj is not None:
+                    res = await session.execute(
+                        select(question_authors).where(question_authors.c.question_id == pool_q.id, question_authors.c.author_id == author_obj.id)
+                    )
+                    if not res.first():
+                        await session.execute(question_authors.insert().values(question_id=pool_q.id, author_id=author_obj.id))
+
+        # handle tournaments
+        if tournaments:
+            for t in tournaments:
+                # expected structure: {'id': 12858, 'title': 'Чемпионат ГолКвиза. Сезон 3'}
+                tid = t.get('id')
+                title = t.get('title')
+                tour_obj = None
+                if tid is not None:
+                    tour_obj = await session.get(Tournament, tid)
+                    if tour_obj and title and tour_obj.title != title:
+                        tour_obj.title = title
+                if tour_obj is None and title:
+                    result = await session.execute(select(Tournament).where(Tournament.title == title))
+                    tour_obj = result.scalars().first()
+                if tour_obj is None:
+                    if tid is not None:
+                        tour_obj = Tournament(id=tid, title=title)
+                    else:
+                        tour_obj = Tournament(title=title)
+                    session.add(tour_obj)
+                    await session.flush()
+
+                if tour_obj is not None:
+                    res = await session.execute(
+                        select(question_tournaments).where(question_tournaments.c.question_id == pool_q.id, question_tournaments.c.tournament_id == tour_obj.id)
+                    )
+                    if not res.first():
+                        await session.execute(question_tournaments.insert().values(question_id=pool_q.id, tournament_id=tour_obj.id))
+
         await session.commit()
         await session.refresh(pool_q)
         return pool_q
@@ -134,6 +212,57 @@ async def pop_random_pool_question_and_mark_used():
         pool_q = result.scalars().first()
         if not pool_q:
             return None
+        pool_q.used = True
+        session.add(pool_q)
+        await session.commit()
+        await session.refresh(pool_q)
+        return pool_q
+
+
+# Feedback (evaluation) functions
+async def add_question_feedback(user_id: int, question_id: int, liked: bool):
+    """Add or update feedback for a question (like/dislike)"""
+    async with async_session() as session:
+        # Check if feedback already exists
+        result = await session.execute(
+            select(QuestionFeedback).where(
+                QuestionFeedback.user_id == user_id,
+                QuestionFeedback.question_id == question_id
+            )
+        )
+        feedback = result.scalars().first()
+        
+        if feedback:
+            return feedback
+        
+        # Create new feedback
+        feedback = QuestionFeedback(user_id=user_id, question_id=question_id, liked=liked)
+        session.add(feedback)
+        
+        await session.commit()
+        await session.refresh(feedback)
+        return feedback
+
+
+async def get_weighted_random_pool_question_and_mark_used():
+    """Execute the weighted random-selection SQL (stored in db/queries/question_query.sql),
+    return the matching QuestionPool mapped object and mark it used.
+    """
+    sql_path = Path(__file__).parent / "queries" / "question_query.sql"
+    sql = sql_path.read_text(encoding="utf-8")
+
+    async with async_session() as session:
+        result = await session.execute(text(sql))
+        row = result.first()
+        if not row:
+            return None
+
+        # SQL expected to return an `id` column as first column
+        qid = row[0]
+        pool_q = await session.get(QuestionPool, qid)
+        if not pool_q:
+            return None
+
         pool_q.used = True
         session.add(pool_q)
         await session.commit()
