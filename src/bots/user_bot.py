@@ -6,7 +6,7 @@ import aiohttp
 from aiohttp import web
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
-from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ApplicationBuilder, Application
+from telegram.ext import CallbackContext, ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ApplicationBuilder, Application
 from telegram.request import HTTPXRequest
 
 from db.usage import (
@@ -14,9 +14,10 @@ from db.usage import (
     get_or_create_user,
     get_todays_question_for_competition,
     record_answer,
+    add_question_feedback,
     async_session,
 )
-from db.models import Competition, UsersRegistrations, User, Answer as AnswerModel, Question
+from db.models import Competition, UsersRegistrations, User, Answer as AnswerModel, Question, QuestionFeedback
 from sqlalchemy import select, func
 
 logging.basicConfig(
@@ -156,7 +157,12 @@ async def submit_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text('Ошибка при загрузке изображения вопроса.')
                     return
                 await update.message.reply_photo(photo=await resp.read())
-    await update.message.reply_text(f"Вопрос дня:\n{q_found.body}")
+    # Decode all escape sequences (\n, \t, \r, etc.)
+    try:
+        body_text = q_found.body.encode().decode('unicode_escape')
+    except:
+        body_text = q_found.body
+    await update.message.reply_text(f"Вопрос дня:\n{body_text}")
     context.user_data['submit_q_id'] = q_found.id
     context.user_data['submit_step'] = 'await_answer'
 
@@ -194,7 +200,11 @@ async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
         from db.models import Question
         question = await session.get(Question, qid)
         if question:
-            correct_answer_msg = f'Ваш ответ: "{ans_text}"\n\n✅ Правильный ответ: "{question.answer}"'
+            try:
+                answer_text = question.answer.encode().decode('unicode_escape')
+            except:
+                answer_text = question.answer
+            correct_answer_msg = f'Ваш ответ: "{ans_text}"\n\n✅ Правильный ответ: "{answer_text}"'
         else:
             correct_answer_msg = f'Ваш ответ: "{ans_text}"'
     
@@ -202,6 +212,30 @@ async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # clear state
     context.user_data['submit_step'] = None
     context.user_data['submit_q_id'] = None
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👍", callback_data=f"feedback:{qid}:1"),
+            InlineKeyboardButton("👎", callback_data=f"feedback:{qid}:0"),
+        ]
+    ])
+    await update.message.reply_text("Оцени вопрос:", reply_markup=keyboard)
+
+
+async def handle_feedback(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data or ""
+    parts = data.split(":")
+
+    _, q_id, liked = parts
+    liked = liked == "1"
+    qid = int(q_id)
+
+    user = await get_or_create_user(query.from_user.id, query.from_user.username or query.from_user.full_name)
+    await add_question_feedback(user.id, qid, liked)
+    await query.delete_message()
+    return
 
 
 async def validate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -465,6 +499,8 @@ def main():
     # Callback handlers for registration
     application.add_handler(CallbackQueryHandler(register_competition_callback, pattern='^reg_comp:'))
     application.add_handler(CallbackQueryHandler(validate_callback, pattern='^validate:'))
+    application.add_handler(CallbackQueryHandler(handle_feedback, pattern='^feedback:'))
+
     
     # Message handlers for submit_answer multi-step
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, user_message_handler))

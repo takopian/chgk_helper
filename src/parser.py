@@ -145,5 +145,7 @@ def parse_pack_questions(html: str):
             "answer": q.get("answer", ""),
             "image_path": q.get("razdatkaPic", None),
             "comment": q.get("comment", None),
+            "authors": q.get("authors", []),
+            "tournaments": q.get("tournaments", []),
         })
     return questions

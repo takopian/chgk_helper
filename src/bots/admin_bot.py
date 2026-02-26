@@ -12,8 +12,14 @@ from db.usage import (
     create_competition,
     add_question,
     async_session,
+    get_weighted_random_pool_question_and_mark_used,
+    get_unasked_pool_count,
+    get_all_present_packs, 
+    add_pool_question, 
+    add_question, 
+    get_unasked_pool_count, 
+    get_todays_question_for_competition,
 )
-from db.usage import get_unasked_pool_count, get_all_present_packs, add_pool_question, pop_random_pool_question_and_mark_used, add_question, get_unasked_pool_count, get_todays_question_for_competition
 
 from db.models import Competition, Answer as AnswerModel
 from sqlalchemy import select
@@ -180,8 +186,8 @@ async def add_question_handle_step(update: Update, context: ContextTypes.DEFAULT
 
 async def refill_pool_job(context):
     current = await get_unasked_pool_count()
-    if current >= 1000:
-        logging.info(f'Pool has sufficient questions: {current} >= {1000}')
+    if current >= 5000:
+        logging.info(f'Pool has sufficient questions: {current} >= {5000}')
         return
     
     added = 0
@@ -202,7 +208,10 @@ async def refill_pool_job(context):
             logging.info(f'Parsed {len(parsed)} questions from {pack_url} for pool refill')
             for q in parsed:
                 try:
-                    await add_pool_question(q['body'], q.get('answer'), q.get('handout'), q.get('comment'), q.get('image_path'), pack_url)
+                    await add_pool_question(
+                        q['body'], q.get('answer'), q.get('handout'), q.get('comment'),
+                        q.get('image_path'),  q.get('authors'),  q.get('tournaments'), pack_url
+                        )
                     added += 1
                 except Exception:
                     logging.exception(f'Failed to add pool question from {pack_url}')
@@ -229,7 +238,7 @@ async def distribute_random_questions_job(context: ContextTypes.DEFAULT_TYPE):
         if q:
             continue
 
-        pool_q = await pop_random_pool_question_and_mark_used()
+        pool_q = await get_weighted_random_pool_question_and_mark_used()
         if not pool_q:
             logging.info('Pool empty, cannot assign question for %s', comp.name)
             continue
@@ -238,7 +247,7 @@ async def distribute_random_questions_job(context: ContextTypes.DEFAULT_TYPE):
         if pool_q.handout:
             body = "Раздаточный материал:\n" + pool_q.handout + '\n\n' + body
         try:
-            await add_question(comp.id, body, answer, pool_q.image_path, when)
+            await add_question(comp.id, body, answer, pool_q.image_path, when, pool_q.id)
         except Exception as e:
             logging.exception('Failed to add pooled question to competition %s: %s', comp.id, e)
             continue
