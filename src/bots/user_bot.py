@@ -158,11 +158,7 @@ async def submit_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 await update.message.reply_photo(photo=await resp.read())
     # Decode all escape sequences (\n, \t, \r, etc.)
-    try:
-        body_text = q_found.body.encode().decode('unicode_escape')
-    except:
-        body_text = q_found.body
-    await update.message.reply_text(f"Вопрос дня:\n{body_text}")
+    await update.message.reply_text(f"Вопрос дня:\n{q_found.body}")
     context.user_data['submit_q_id'] = q_found.id
     context.user_data['submit_step'] = 'await_answer'
 
@@ -200,11 +196,7 @@ async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
         from db.models import Question
         question = await session.get(Question, qid)
         if question:
-            try:
-                answer_text = question.answer.encode().decode('unicode_escape')
-            except:
-                answer_text = question.answer
-            correct_answer_msg = f'Ваш ответ: "{ans_text}"\n\n✅ Правильный ответ: "{answer_text}"'
+            correct_answer_msg = f'Ваш ответ: "{ans_text}"\n\n✅ Правильный ответ: "{question.answer}"'
         else:
             correct_answer_msg = f'Ваш ответ: "{ans_text}"'
     
