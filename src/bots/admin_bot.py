@@ -101,6 +101,12 @@ async def admin_create_competition(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logging.error(f"Failed to notify user bot about new competition: {e}")
 
+async def admin_send_random_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # permission check
+    if not update.effective_user or update.effective_user.id != PERMITTED_ADMIN_TG_ID:
+        await update.message.reply_text('Вы не авторизованы для использования этой команды.')
+        return
+    await distribute_random_questions_job(context)
 
 async def admin_add_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # permission check
@@ -258,6 +264,7 @@ async def distribute_random_questions_job(context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("create_competition", "Создать турнир (админ). Формат: /create_competition название|YYYY-MM-DD|YYYY-MM-DD"),
+        BotCommand("send_random_question", "Отправить вопрос руками а не джобой"),
         BotCommand("add_question", "Добавить вопрос к турниру (админ)."),
     ])
     application.job_queue.run_daily(refill_pool_job, time=time(hour=9, minute=0, tzinfo=MSK))
@@ -280,6 +287,7 @@ def main():
         request
     ).post_init(post_init).build()
     application.add_handler(CommandHandler('create_competition', admin_create_competition))
+    application.add_handler(CommandHandler('send_random_question', admin_send_random_question))
     application.add_handler(CommandHandler('add_question', admin_add_question))
     
     # Callback handlers for add_question flow
