@@ -3,13 +3,14 @@ import uuid
 from datetime import datetime, time, timedelta
 import pytz
 import os
+import asyncio
 
 import requests
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext, CallbackQueryHandler, Application
 
-from parser import parse_quizzes
+from parser import get_difficulty, parse_quizzes
 from quiz import PollsData
 from utils import read_yaml, write_yaml
 
@@ -97,7 +98,7 @@ async def notify_registered(context):
                 try:
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=f"Напоминаю: что сегодня состоится игра:\n {quiz.poll_text}",
+                        text=f"Напоминаю, что сегодня состоится игра:\n {quiz.poll_text}",
                     )
                 except Exception as e:
                     print(f"Failed to send message to chat {chat_id}: {e}")
@@ -114,14 +115,14 @@ async def create_poll(update: Update, context) -> None:
 
     new_quizzes = []
     old_quizzes = set(chat.poll_text for chat in chat_data.poll_quizzes)
-    # difficulty_tasks = []
+    difficulty_tasks = []
     for quiz in quizzes:
         if quiz.poll_text in old_quizzes:
             logging.info(f"Already voted on {quiz.poll_text}")
             continue
         new_quizzes.append(quiz)
         quiz.id = uuid.uuid4().hex
-        # difficulty_tasks.append(get_difficulty(quiz.url))
+        difficulty_tasks.append(get_difficulty(quiz.url))
 
     if not new_quizzes:
         await update.message.reply_text("Нет новых игр.")
@@ -129,13 +130,13 @@ async def create_poll(update: Update, context) -> None:
 
     logging.info(f"Got {len(new_quizzes)} new quizzes.")
 
-    # difficulties = await asyncio.gather(*difficulty_tasks)
-    # for quiz, difficulty in zip(new_quizzes, difficulties):
-    #     quiz.difficulty = difficulty
+    difficulties = await asyncio.gather(*difficulty_tasks)
+    for quiz, difficulty in zip(new_quizzes, difficulties):
+        quiz.difficulty = difficulty
 
     poll_size = 10 if len(new_quizzes) % 10 != 1 else 9
     polls = [
-        [f"{quiz.poll_text[:90]}, с-ь ?" for quiz in new_quizzes[i: i + poll_size]]
+        [f"{quiz.poll_text[:90]}, с-ь {quiz.difficulty}" for quiz in new_quizzes[i: i + poll_size]]
         for i in range(0, len(new_quizzes), poll_size)
     ]
     for options in polls:

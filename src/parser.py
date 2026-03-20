@@ -10,35 +10,22 @@ from quiz import Quiz
 from utils import with_locale, FORMAT
 
 
-async def get_difficulty(link):
+async def get_difficulty(link) -> str | None:
     async with aiohttp.ClientSession() as session:
         async with session.get(link) as response:
             html = await response.text()
 
         soup = BeautifulSoup(html, 'html.parser')
-        article = soup.find('article').find('article')
-        announce = article.get_text('\n')
+        entry = soup.find('div', class_='aentry-post__text aentry-post__text--view')
+        text = entry.get_text(separator=" ", strip=True)
+        match = re.search(r"TrueDL:\s*([\d.]+)", text)
+        truedl = match.group(1) if match else None
 
-        prompt = f"""
-            Я покажу тебе анонс турнира, тебе нужно в качестве ответа выдать 
-            мне единственное число, являющееся сложностью данного турнира.
-            Ответ должен содержать только число, в нем не должно быть никаких дополнительных символов.
-            Это число должно равняться заявленной сложности турнира.
-            Вот искомый анонс:
-            {announce}
-        """
+        if not truedl:
+            match = re.search(r"сложность:\s*([\d.]+)", text)
+            truedl = match.group(1) if match else None
 
-        async with session.post(
-                "http://ollama:11434/api/generate",
-                json={
-                    "model": "llama3.1",
-                    "stream": False,
-                    "prompt": prompt
-                }
-        ) as gpt_response:
-            gpt_response_json = await gpt_response.json()
-
-    return float(gpt_response_json['response'].replace(",", "."))
+    return truedl
 
 
 @with_locale('ru_RU.UTF-8')

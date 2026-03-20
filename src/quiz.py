@@ -10,7 +10,7 @@ from utils import datetime_serializer
 class Quiz:
     poll_text: str
     url: str = None
-    difficulty: float = None
+    difficulty: str = None
     date: datetime = None
     id: str = None
 
