@@ -20,5 +20,6 @@ jobs:
           script: |
             cd ~/chgk_helper
             git pull
-            docker-compose down
-            docker-compose up -d --build
+            docker-compose stop polls_bot admin_bot user_bot
+            docker-compose rm -f polls_bot admin_bot user_bot
+            docker-compose up -d --build polls_bot admin_bot user_bot --remove-orphans
