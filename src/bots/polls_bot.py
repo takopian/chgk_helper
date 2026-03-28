@@ -1,6 +1,7 @@
 import logging
 import uuid
 from datetime import datetime, time, timedelta
+import aiohttp
 import pytz
 import os
 import asyncio
@@ -106,8 +107,10 @@ async def notify_registered(context):
 
 async def create_poll(update: Update, context) -> None:
     url = "https://chgk-spb.livejournal.com/"
-    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    quizzes = parse_quizzes(response.text)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as response:
+            html = await response.text()
+    quizzes = parse_quizzes(html)
     chat_id = update.effective_chat.id
 
     polls_data = PollsData.load()
