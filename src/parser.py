@@ -12,7 +12,7 @@ from utils import with_locale, FORMAT
 
 async def get_difficulty(link) -> str | None:
     async with aiohttp.ClientSession() as session:
-        async with session.get(link) as response:
+        async with session.get(link, headers={"User-Agent": "Mozilla/5.0"}) as response:
             html = await response.text()
 
         soup = BeautifulSoup(html, 'html.parser')

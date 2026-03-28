@@ -106,7 +106,7 @@ async def notify_registered(context):
 
 async def create_poll(update: Update, context) -> None:
     url = "https://chgk-spb.livejournal.com/"
-    response = requests.get(url)
+    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
     quizzes = parse_quizzes(response.text)
     chat_id = update.effective_chat.id
 
