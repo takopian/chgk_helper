@@ -11,13 +11,14 @@ from telegram.request import HTTPXRequest
 from db.usage import (
     create_competition,
     add_question,
+    unregister_user,
+    copy_registrations_from_competition,
+    get_previous_competition,
     async_session,
     get_weighted_random_pool_question_and_mark_used,
     get_unasked_pool_count,
-    get_all_present_packs, 
-    add_pool_question, 
-    add_question, 
-    get_unasked_pool_count, 
+    get_all_present_packs,
+    add_pool_question,
     get_todays_question_for_competition,
 )
 
@@ -90,12 +91,20 @@ async def admin_create_competition(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text('Использование: /create_competition название|YYYY-MM-DD|YYYY-MM-DD[|type]')
         return
     name, start_s, end_s = parts[0], parts[1], parts[2]
-    competition_type = int(parts[3].strip()) if len(parts) == 4 else '0'
+    competition_type = int(parts[3].strip()) if len(parts) == 4 else 0
     start_date = date.fromisoformat(start_s.strip())
     end_date = date.fromisoformat(end_s.strip())
     comp = await create_competition(name.strip(), start_date, end_date, competition_type=competition_type)
+
+    # Auto-register users from the most recent previous competition
+    prev_comp = await get_previous_competition(start_date)
+    if prev_comp:
+        migrated = await copy_registrations_from_competition(prev_comp.id, comp.id)
+        logging.info(f"Auto-registered {migrated} users from competition {prev_comp.name} ({prev_comp.id}) to {comp.name} ({comp.id})")
+
     await update.message.reply_text(f'Турнир "{comp.name}" создан')
-    # Notify user bot about newly created competition
+
+    # Notify user bot about newly created competition (non-registered users only are notified in user_bot)
     try:
         await notify_user_bot_competition_webhook(comp.id, comp.name)
     except Exception as e:

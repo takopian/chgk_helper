@@ -11,6 +11,7 @@ from telegram.request import HTTPXRequest
 
 from db.usage import (
     register_user,
+    unregister_user,
     get_or_create_user,
     get_todays_question_for_competition,
     record_answer,
@@ -53,65 +54,56 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def user_register_competition(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Step 1: Show list of active competitions as buttons
     when = datetime.now(MSK).date()
 
-    # Ensure we have a user record to check registrations
-    user = await get_or_create_user(update.effective_user.id, update.effective_user.username or '')
-
+    # Select currently active competition or most recent past competition
     async with async_session() as session:
         res = await session.execute(
-            select(Competition).where(Competition.start_date <= when, Competition.end_date >= when)
+            select(Competition).where(Competition.start_date <= when, Competition.end_date >= when).order_by(Competition.start_date.desc())
         )
-        active_comps = res.scalars().all()
+        comp = res.scalars().first()
 
-        # Fetch user's existing registrations
-        regs_res = await session.execute(
-            select(UsersRegistrations).where(UsersRegistrations.user_id == user.id)
-        )
-        regs = regs_res.scalars().all()
-        registered_comp_ids = {r.competition_id for r in regs}
+        if not comp:
+            res = await session.execute(
+                select(Competition).where(Competition.end_date < when).order_by(Competition.end_date.desc()).limit(1)
+            )
+            comp = res.scalars().first()
 
-    if not active_comps:
-        await update.message.reply_text('Нет активных турниров.')
+    if not comp:
+        await update.message.reply_text('Нет доступных турниров для регистрации.')
         return
 
-    # Filter out competitions the user already registered for
-    unregistered = [c for c in active_comps if c.id not in registered_comp_ids]
+    await get_or_create_user(update.effective_user.id, update.effective_user.username or '')
 
-    if not unregistered:
-        # User is registered for all active competitions
-        registered_names = ', '.join([c.name for c in active_comps if c.id in registered_comp_ids])
-        if registered_names:
-            await update.message.reply_text(f'Вы уже зарегистрированы на активные турниры: {registered_names}')
-        else:
-            await update.message.reply_text('Вы уже зарегистрированы на все активные турниры.')
-        return
-
-    keyboard = [[InlineKeyboardButton(c.name, callback_data=f'reg_comp:{c.id}')] for c in unregistered]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if registered_comp_ids:
-        registered_names = ', '.join([c.name for c in active_comps if c.id in registered_comp_ids])
-        await update.message.reply_text(f'Выберите турнир для регистрации:\n(Уже зарегистрированы: {registered_names})', reply_markup=reply_markup)
-    else:
-        await update.message.reply_text('Выберите турнир для регистрации:', reply_markup=reply_markup)
+    await register_user(update.effective_user.id, update.effective_user.username or '', comp.id)
+    await update.message.reply_text(f'Вы зарегистрировались на турнир "{comp.name}".')
 
 
-async def register_competition_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Step 2: User selected a competition, register them
-    query = update.callback_query
-    await query.answer()
-    comp_id = int(query.data.split(':')[1])
-    tg_id = query.from_user.id
-    username = query.from_user.username or ''
-    # Register for competition
-    reg = await register_user(tg_id, username, comp_id)
-    # Get competition name
+async def user_unregister_competition(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    when = datetime.now(MSK).date()
+
     async with async_session() as session:
-        comp = await session.get(Competition, comp_id)
-        comp_name = comp.name if comp else 'неизвестный турнир'
-    await query.edit_message_text(f'Вы зарегистрировались на турнир "{comp_name}"')
+        comp_res = await session.execute(
+            select(Competition).where(Competition.start_date <= when, Competition.end_date >= when).order_by(Competition.start_date.desc())
+        )
+        comp = comp_res.scalars().first()
+
+        if not comp:
+            comp_res = await session.execute(
+                select(Competition).where(Competition.end_date < when).order_by(Competition.end_date.desc()).limit(1)
+            )
+            comp = comp_res.scalars().first()
+
+    if not comp:
+        await update.message.reply_text('Нет доступных турниров для отмены регистрации.')
+        return
+
+    success = await unregister_user(update.effective_user.id, comp.id)
+
+    if success:
+        await update.message.reply_text(f'Вы отменили регистрацию на турнир "{comp.name}".')
+    else:
+        await update.message.reply_text(f'Вы не были зарегистрированы на турнир "{comp.name}".')
 
 
 async def submit_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -385,6 +377,7 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("start", "Показать справку и инструкции."),
         BotCommand("register_competition", "Зарегистрироваться на турнир."),
+        BotCommand("unregister_competition", "Отменить регистрацию с турнира."),
         BotCommand("submit_answer", "Ответить на вопрос дня."),
         BotCommand("leaderboard", "Показать рейтинг участников по правильным ответам."),
     ])
@@ -447,22 +440,30 @@ async def handle_competition_webhook(request):
 
         app = request.app['application']
 
-        # Notify all users about the new competition
+        # Notify non-registered users about the new competition
         async with async_session() as session:
-            from db.models import User as UserModel
-            res = await session.execute(select(UserModel).where(UserModel.tg_id != None))
+            registered_res = await session.execute(
+                select(UsersRegistrations.user_id).where(UsersRegistrations.competition_id == competition_id)
+            )
+            registered_user_ids = {row[0] for row in registered_res.fetchall()}
+
+            res = await session.execute(select(User).where(User.tg_id != None))
             users = res.scalars().all()
 
             for user in users:
-                if user and user.tg_id:
-                    try:
-                        await app.bot.send_message(
-                            chat_id=user.tg_id,
-                            text=(f"📢 Новый турнир '{competition_name}' создан!\n"
-                                  "Используйте /register_competition чтобы зарегистрироваться.")
-                        )
-                    except Exception as e:
-                        logging.error(f"Failed to send competition notification to user {user.tg_id}: {e}")
+                if not user or not user.tg_id:
+                    continue
+                if user.id in registered_user_ids:
+                    # user already registered (including auto-registered) -> skip competition announcement
+                    continue
+                try:
+                    await app.bot.send_message(
+                        chat_id=user.tg_id,
+                        text=(f"📢 Новый турнир '{competition_name}' создан!\n"
+                              "Используйте /register_competition чтобы зарегистрироваться.")
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to send competition notification to user {user.tg_id}: {e}")
 
         return web.Response(text='OK', status=200)
     except Exception as e:
@@ -487,11 +488,11 @@ def main():
     ).post_init(post_init).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('register_competition', user_register_competition))
+    application.add_handler(CommandHandler('unregister_competition', user_unregister_competition))
     application.add_handler(CommandHandler('submit_answer', submit_answer))
     application.add_handler(CommandHandler('leaderboard', leaderboard))
     
     # Callback handlers for registration
-    application.add_handler(CallbackQueryHandler(register_competition_callback, pattern='^reg_comp:'))
     application.add_handler(CallbackQueryHandler(validate_callback, pattern='^validate:'))
     application.add_handler(CallbackQueryHandler(handle_feedback, pattern='^feedback:'))
 

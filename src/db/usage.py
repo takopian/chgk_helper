@@ -89,6 +89,70 @@ async def register_user(tg_id: int, username: str, competition_id: int):
         return reg
 
 
+async def unregister_user(tg_id: int, competition_id: int) -> bool:
+    """Unregister a user from a competition by their Telegram ID."""
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.tg_id == tg_id))
+        user = result.scalars().first()
+        if not user:
+            return False
+
+        reg_result = await session.execute(
+            select(UsersRegistrations).where(
+                UsersRegistrations.user_id == user.id,
+                UsersRegistrations.competition_id == competition_id,
+            )
+        )
+        reg = reg_result.scalars().first()
+        if not reg:
+            return False
+
+        await session.delete(reg)
+        await session.commit()
+        return True
+
+
+async def copy_registrations_from_competition(source_competition_id: int, target_competition_id: int) -> int:
+    """Copy registrations from one competition to another, avoiding duplicates."""
+    async with async_session() as session:
+        source_regs = await session.execute(
+            select(UsersRegistrations.user_id).where(UsersRegistrations.competition_id == source_competition_id)
+        )
+        source_user_ids = {row[0] for row in source_regs.fetchall()}
+
+        if not source_user_ids:
+            return 0
+
+        existing_target_regs = await session.execute(
+            select(UsersRegistrations.user_id).where(UsersRegistrations.competition_id == target_competition_id)
+        )
+        existing_target_user_ids = {row[0] for row in existing_target_regs.fetchall()}
+
+        inserted = 0
+        for user_id in source_user_ids:
+            if user_id in existing_target_user_ids:
+                continue
+            session.add(UsersRegistrations(user_id=user_id, competition_id=target_competition_id))
+            inserted += 1
+
+        if inserted > 0:
+            await session.commit()
+
+        return inserted
+
+
+async def get_previous_competition(start_date: date):
+    """Return the most recently ended competition before the given start date."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Competition)
+            .where(Competition.end_date < start_date)
+            .order_by(Competition.end_date.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
+
 async def record_answer(user_id: int, question_id: int, answer_text: str):
     async with async_session() as session:
         ans = Answer(user_id=user_id, question_id=question_id, answer=answer_text)
