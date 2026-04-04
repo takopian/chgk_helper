@@ -46,6 +46,7 @@ def parse_quizzes(html) -> list[Quiz]:
             current_date = element.get_text(strip=True)
         elif element.name == 'a' and current_date:
             url = element.attrs['href']
+            url = url.replace("https://", "http://")
             quiz_text = element.get_text(strip=True)
             quizzes.append(
                 Quiz(

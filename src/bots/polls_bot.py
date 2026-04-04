@@ -106,7 +106,7 @@ async def notify_registered(context):
 
 
 async def create_poll(update: Update, context) -> None:
-    url = "https://chgk-spb.livejournal.com/"
+    url = "http://chgk-spb.livejournal.com/"
     html = await request_lifejournal(url)
     quizzes = parse_quizzes(html)
     chat_id = update.effective_chat.id
