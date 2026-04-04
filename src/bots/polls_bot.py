@@ -1,4 +1,5 @@
 import logging
+import socket
 import uuid
 from datetime import datetime, time, timedelta
 import aiohttp
@@ -6,14 +7,13 @@ import pytz
 import os
 import asyncio
 
-import requests
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext, CallbackQueryHandler, Application
 
 from parser import get_difficulty, parse_quizzes
 from quiz import PollsData
-from utils import read_yaml, write_yaml
+from utils import read_yaml, request_lifejournal, write_yaml
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -107,9 +107,7 @@ async def notify_registered(context):
 
 async def create_poll(update: Update, context) -> None:
     url = "https://chgk-spb.livejournal.com/"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as response:
-            html = await response.text()
+    html = await request_lifejournal(url)
     quizzes = parse_quizzes(html)
     chat_id = update.effective_chat.id
 

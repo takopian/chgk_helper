@@ -7,23 +7,20 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 
 from quiz import Quiz
-from utils import with_locale, FORMAT
+from utils import with_locale, FORMAT, request_lifejournal
 
 
 async def get_difficulty(link) -> str | None:
-    async with aiohttp.ClientSession() as session:
-        async with session.get(link, headers={"User-Agent": "Mozilla/5.0"}) as response:
-            html = await response.text()
+    html = await request_lifejournal(link)
+    soup = BeautifulSoup(html, 'html.parser')
+    entry = soup.find('div', class_='aentry-post__text aentry-post__text--view')
+    text = entry.get_text(separator=" ", strip=True)
+    match = re.search(r"TrueDL:\s*([\d.]+)", text)
+    truedl = match.group(1) if match else None
 
-        soup = BeautifulSoup(html, 'html.parser')
-        entry = soup.find('div', class_='aentry-post__text aentry-post__text--view')
-        text = entry.get_text(separator=" ", strip=True)
-        match = re.search(r"TrueDL:\s*([\d.]+)", text)
+    if not truedl:
+        match = re.search(r"сложность:\s*([\d.]+)", text)
         truedl = match.group(1) if match else None
-
-        if not truedl:
-            match = re.search(r"сложность:\s*([\d.]+)", text)
-            truedl = match.group(1) if match else None
 
     return truedl
 
