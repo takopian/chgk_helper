@@ -35,8 +35,8 @@ def parse_date(date_str: str) -> datetime:
 
 def parse_quizzes(html) -> list[Quiz]:
     soup = BeautifulSoup(html, 'html.parser')
-    entry_content = soup.find('div', class_='entry-content')
-    entry_body = entry_content.find('div', class_='entry-body')
+    entry_content = soup.find('div', class_='entryunit__body')
+    entry_body = entry_content.find('div', class_='entryunit__text')
     quizzes = []
 
     current_date = None
