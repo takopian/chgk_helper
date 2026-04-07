@@ -3,14 +3,14 @@ import uuid
 from datetime import datetime, time, timedelta
 import pytz
 import os
-import asyncio
+import aiohttp
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext, CallbackQueryHandler, Application
 
 from parser import get_difficulty, parse_quizzes
-from quiz import PollsData
+from quiz import PollsData, Quiz
 from utils import read_yaml, request_lifejournal, write_yaml
 
 logging.basicConfig(
@@ -104,9 +104,16 @@ async def notify_registered(context):
 
 
 async def create_poll(update: Update, context) -> None:
-    url = "https://chgk-spb.livejournal.com/"
-    html = await request_lifejournal(url)
-    quizzes = parse_quizzes(html)
+    webserver_url = os.environ.get("WEBSERVER_URL", "http://localhost:8000")
+    api_key = os.environ.get("WEBSERVER_API_KEY")
+    headers = {'X-API-Key': api_key} if api_key else {}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{webserver_url}/parse_quizzes", headers=headers) as resp:
+            if resp.status != 200:
+                await update.message.reply_text("Failed to fetch quizzes from webserver.")
+                return
+            quizzes_data = await resp.json()
+            quizzes = [Quiz(**data) for data in quizzes_data]
     chat_id = update.effective_chat.id
 
     polls_data = PollsData.load()
@@ -114,24 +121,18 @@ async def create_poll(update: Update, context) -> None:
 
     new_quizzes = []
     old_quizzes = set(chat.poll_text for chat in chat_data.poll_quizzes)
-    difficulty_tasks = []
     for quiz in quizzes:
         if quiz.poll_text in old_quizzes:
             logging.info(f"Already voted on {quiz.poll_text}")
             continue
         new_quizzes.append(quiz)
         quiz.id = uuid.uuid4().hex
-        difficulty_tasks.append(get_difficulty(quiz.url))
 
     if not new_quizzes:
         await update.message.reply_text("Нет новых игр.")
         return
 
     logging.info(f"Got {len(new_quizzes)} new quizzes.")
-
-    difficulties = await asyncio.gather(*difficulty_tasks)
-    for quiz, difficulty in zip(new_quizzes, difficulties):
-        quiz.difficulty = difficulty
 
     poll_size = 10 if len(new_quizzes) % 10 != 1 else 9
     polls = [

@@ -20,10 +20,10 @@ jobs:
           script: |
             cd ~/chgk_helper
             git pull
-            docker-compose stop admin_bot user_bot
-            docker-compose rm -f admin_bot user_bot
-            docker-compose up -d --build admin_bot user_bot
-      - name: Deploy polls_bot
+            docker-compose stop admin_bot user_bot polls_bot
+            docker-compose rm -f admin_bot user_bot polls_bot
+            docker-compose up -d --build admin_bot user_bot polls_bot
+      - name: Deploy webserver
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.POLLS_SERVER_HOST }}
@@ -33,6 +33,6 @@ jobs:
           script: |
             cd ~/chgk_helper
             git pull
-            docker-compose stop polls_bot
-            docker-compose rm -f polls_bot
-            docker-compose up -d --build polls_bot
+            docker-compose stop webserver
+            docker-compose rm -f webserver
+            docker-compose up -d --build webserver

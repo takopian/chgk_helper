@@ -45,6 +45,18 @@ services:
       WEBHOOK_URL: http://user_bot:8001/webhook/question
       WEBHOOK_PORT: 8001
 
+  webserver:
+    build: .
+    restart: always
+    env_file: .env
+    command: python -m bots.webserver
+    volumes:
+      - ./src:/app
+    ports:
+      - "8000:8000"
+    networks:
+      - shared_postgres_net
+
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
