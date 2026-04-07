@@ -1,9 +1,7 @@
 import locale
-import logging
 from datetime import datetime
 
 import aiohttp
-import cloudscraper
 import yaml
 import socket
 
@@ -54,19 +52,16 @@ async def fetch(session: aiohttp.ClientSession, url: str) -> str | None:
 
 
 async def request_lifejournal(link: str) -> str:
-    # global session
-    # if session is None:
-    #     connector = aiohttp.TCPConnector(family=socket.AF_INET, limit=10)
-    #     timeout = aiohttp.ClientTimeout(total=30)
-    #     session = aiohttp.ClientSession(connector=connector, timeout=timeout)
-    # async with session.get(link, headers={
-    #     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    #     "Accept": "text/html,application/xhtml+xml",
-    #     "Accept-Language": "en-US,en;q=0.9",
-    #     "Connection": "keep-alive",
-    # }) as response:
-    #     html = await response.text()
-    # return html
-    scraper = cloudscraper.create_scraper()
-    html = scraper.get(link).text
+    global session
+    if session is None:
+        connector = aiohttp.TCPConnector(family=socket.AF_INET, limit=10)
+        timeout = aiohttp.ClientTimeout(total=30)
+        session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+    async with session.get(link, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+    }) as response:
+        html = await response.text()
     return html

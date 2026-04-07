@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy via SSH
+      - name: Deploy admin_bot and user_bot
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -20,6 +20,19 @@ jobs:
           script: |
             cd ~/chgk_helper
             git pull
-            docker-compose stop polls_bot admin_bot user_bot
-            docker-compose rm -f polls_bot admin_bot user_bot
-            docker-compose up -d --build polls_bot admin_bot user_bot
+            docker-compose stop admin_bot user_bot
+            docker-compose rm -f admin_bot user_bot
+            docker-compose up -d --build admin_bot user_bot
+      - name: Deploy polls_bot
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.POLLS_SERVER_HOST }}
+          username: ${{ secrets.POLLS_SERVER_USER }}
+          key: ${{ secrets.POLLS_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.POLLS_SERVER_PORT || 22 }}
+          script: |
+            cd ~/chgk_helper
+            git pull
+            docker-compose stop polls_bot
+            docker-compose rm -f polls_bot
+            docker-compose up -d --build polls_bot
