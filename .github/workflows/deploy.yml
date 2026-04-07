@@ -20,8 +20,8 @@ jobs:
           script: |
             cd ~/chgk_helper
             git pull
-            docker-compose stop admin_bot user_bot polls_bot
-            docker-compose rm -f admin_bot user_bot polls_bot
+            # docker-compose stop admin_bot user_bot polls_bot
+            # docker-compose rm -f admin_bot user_bot polls_bot
             docker-compose up -d --build admin_bot user_bot polls_bot
       - name: Deploy webserver
         uses: appleboy/ssh-action@v1.0.3
@@ -33,6 +33,6 @@ jobs:
           script: |
             cd ~/chgk_helper
             git pull
-            docker-compose stop webserver
-            docker-compose rm -f webserver
+            # docker-compose stop webserver
+            # docker-compose rm -f webserver
             docker-compose up -d --build webserver
