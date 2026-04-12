@@ -1,6 +1,6 @@
+import asyncio
 import logging
 
-import aiohttp
 import re
 import json
 from bs4 import BeautifulSoup
@@ -11,9 +11,14 @@ from utils import with_locale, FORMAT, request_lifejournal
 
 
 async def get_difficulty(link) -> str | None:
+    await asyncio.sleep(0.1)  # To avoid overwhelming the server with requests
     html = await request_lifejournal(link)
     soup = BeautifulSoup(html, 'html.parser')
     entry = soup.find('div', class_='aentry-post__text aentry-post__text--view')
+    if not entry:
+        logging.error(f"Could not find difficulty for {link}")
+        logging.error(html)
+        return None
     text = entry.get_text(separator=" ", strip=True)
     match = re.search(r"TrueDL:\s*([\d.]+)", text)
     truedl = match.group(1) if match else None
