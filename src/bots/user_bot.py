@@ -19,7 +19,7 @@ from db.usage import (
     async_session,
 )
 from db.models import Competition, UsersRegistrations, User, Answer as AnswerModel, Question, QuestionFeedback
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -38,14 +38,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 **Как пользоваться ботом:**
 
 1️⃣ **Регистрация на турнир** — `/register_competition`
-   Выбери турнир из предложенного списка
+   Подписаться на рассылку вопросов.
 
-2️⃣ **Ответить на вопрос** — `/submit_answer`
+2️⃣ **Отменить регистрацию на турнир** — `/unregister_competition`
+   Отписаться от рассылки вопросов.
+
+3️⃣ **Ответить на вопрос** — `/submit_answer`
    Команда возвращает вопрос дня. Отправьте свой ответ текстовым сообщением.
    Каждый день 1 новый вопрос. Вопросы постараюсь добавлять до 12:00 МСК.
    На вопрос можно ответить только единожды.
 
-3️⃣ **Посмотреть рейтинг** — `/leaderboard`
+4️⃣ **Догнаться** — `/catch_up`
+   Для забываторов. Ответы не влияют на рейтинг.
+
+5️⃣ **Посмотреть рейтинг** — `/leaderboard`
    Увидите список участников с наибольшим количеством правильных ответов
 
 **Хороших вам раскрутов!** """
@@ -141,19 +147,33 @@ async def submit_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text('Вы уже ответили на этот вопрос.')
             return
 
-    # send today's question and set state to await answer
-    if q_found.image_path:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(PARSER_BASE_URL +q_found.image_path) as resp:
-                if resp.status != 200:
-                    await update.message.reply_text('Ошибка при загрузке изображения вопроса.')
-                    return
-                await update.message.reply_photo(photo=await resp.read())
-    # Unescape literal backslash-escaped characters from database
-    body_text = q_found.body.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
-    await update.message.reply_text(f"Вопрос дня:\n{body_text}")
+    if not await send_question_to_user(update, q_found, 'Вопрос дня:'):
+        return
     context.user_data['submit_q_id'] = q_found.id
     context.user_data['submit_step'] = 'await_answer'
+
+
+async def send_question_to_user(update: Update, question: Question, header: str) -> bool:
+    if question.image_path:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(PARSER_BASE_URL + question.image_path) as resp:
+                if resp.status != 200:
+                    await update.message.reply_text('Ошибка при загрузке изображения вопроса.')
+                    return False
+                await update.message.reply_photo(photo=await resp.read())
+
+    body_text = question.body.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
+    await update.message.reply_text(f"{header}\n{body_text}")
+    return True
+
+
+async def format_and_send_correct_answer(update: Update, question: Question | None, ans_text: str) -> None:
+    if question:
+        answer_text = question.answer.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
+        correct_answer_msg = f'Ваш ответ: "{ans_text}"\n\n✅ Правильный ответ: "{answer_text}"'
+    else:
+        correct_answer_msg = f'Ваш ответ: "{ans_text}"'
+    await update.message.reply_text(correct_answer_msg)
 
 
 async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -186,15 +206,9 @@ async def submit_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Get and show the correct answer
     async with async_session() as session:
-        from db.models import Question
         question = await session.get(Question, qid)
-        if question:
-            answer_text = question.answer.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
-            correct_answer_msg = f'Ваш ответ: "{ans_text}"\n\n✅ Правильный ответ: "{answer_text}"'
-        else:
-            correct_answer_msg = f'Ваш ответ: "{ans_text}"'
-    
-    await update.message.reply_text(correct_answer_msg)
+    await format_and_send_correct_answer(update, question, ans_text)
+
     # clear state
     context.user_data['submit_step'] = None
     context.user_data['submit_q_id'] = None
@@ -311,11 +325,102 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 
+async def catch_up(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = await get_or_create_user(update.effective_user.id, update.effective_user.username or '')
+
+    when = datetime.now(MSK).date()
+    async with async_session() as session:
+        # Find current competition
+        res = await session.execute(
+            select(Competition).join(UsersRegistrations, Competition.id == UsersRegistrations.competition_id).where(
+                Competition.start_date <= when,
+                Competition.end_date >= when,
+                UsersRegistrations.user_id == user.id
+            ).order_by(Competition.start_date.desc())
+        )
+        comp = res.scalars().first()
+
+        if not comp:
+            await update.message.reply_text('Нет активных турниров для практики.')
+            return
+
+        # Find the earliest unanswered question
+        unanswered_question = await get_next_unanswered_question(user.id, comp.id)
+
+        if not unanswered_question:
+            await update.message.reply_text('Вы уже ответили на все вопросы турнира.')
+            return
+
+    if not await send_question_to_user(update, unanswered_question, f"Вопрос за {unanswered_question.date}:"):
+        return
+    context.user_data['practice_q_id'] = unanswered_question.id
+    context.user_data['practice_step'] = 'await_answer'
+
+
+async def catch_up_answer_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('practice_step') != 'await_answer':
+        return
+    qid = context.user_data.get('practice_q_id')
+    if not qid:
+        return
+    ans_text = update.message.text
+    user = await get_or_create_user(update.effective_user.id, update.effective_user.username or '')
+
+    await record_answer(user.id, qid, ans_text)
+    async with async_session() as session:
+        question = await session.get(Question, qid)
+    await format_and_send_correct_answer(update, question, ans_text)
+
+    when = datetime.now(MSK).date()
+    async with async_session() as session:
+        # Find current competition
+        res = await session.execute(
+            select(Competition).join(UsersRegistrations, Competition.id == UsersRegistrations.competition_id).where(
+                Competition.start_date <= when,
+                Competition.end_date >= when,
+                UsersRegistrations.user_id == user.id
+            ).order_by(Competition.start_date.desc())
+        )
+        comp = res.scalars().first()
+        # Find the next unanswered question after the current one
+        next_question = await get_next_unanswered_question(user.id, comp.id)
+
+        if not next_question:
+            await update.message.reply_text('Вы ответили на все вопросы.')
+            context.user_data['practice_step'] = None
+            context.user_data['practice_q_id'] = None
+            return
+
+    # Send the next question
+    if not await send_question_to_user(update, next_question, f"Вопрос за {next_question.date}:"):
+        return
+    context.user_data['practice_q_id'] = next_question.id
+    # practice_step remains 'await_answer'
+
+
+async def get_next_unanswered_question(user_id, competition_id):
+    when = datetime.now(MSK).date()
+    async with async_session() as session:
+        # Find the earliest unanswered question
+        unanswered_res = await session.execute(
+            select(Question)
+            .outerjoin(AnswerModel, and_(AnswerModel.question_id == Question.id, AnswerModel.user_id == user_id))
+            .where(AnswerModel.id == None)
+            .where(Question.competition_id == competition_id)
+            .where(Question.date < when)
+            .order_by(Question.date)
+        )
+        return unanswered_res.scalars().first()
+
 async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Route message to the correct step handler based on state
     submit_step = context.user_data.get('submit_step')
+    practice_step = context.user_data.get('practice_step')
     if submit_step == 'await_answer':
         await submit_answer_save(update, context)
+        return
+    if practice_step == 'await_answer':
+        await catch_up_answer_save(update, context)
         return
 
 async def send_answer_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -380,6 +485,7 @@ async def post_init(application: Application) -> None:
         BotCommand("unregister_competition", "Отменить регистрацию с турнира."),
         BotCommand("submit_answer", "Ответить на вопрос дня."),
         BotCommand("leaderboard", "Показать рейтинг участников по правильным ответам."),
+        BotCommand("catch_up", "Ответить на пропущенные вопросы."),
     ])
     
     # Schedule daily reminder at 10 PM MSK
@@ -491,6 +597,7 @@ def main():
     application.add_handler(CommandHandler('unregister_competition', user_unregister_competition))
     application.add_handler(CommandHandler('submit_answer', submit_answer))
     application.add_handler(CommandHandler('leaderboard', leaderboard))
+    application.add_handler(CommandHandler('catch_up', catch_up))
     
     # Callback handlers for registration
     application.add_handler(CallbackQueryHandler(validate_callback, pattern='^validate:'))
