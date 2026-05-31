@@ -1,3 +1,4 @@
+with lim AS (SELECT random() as val)
 SELECT 
     t.id
  FROM (
@@ -33,6 +34,6 @@ SELECT
   ) tw on q.id = tw.question_id
     where coalesce(50 + aw.weight, 0) + coalesce(50 + tw.weight, 0) >= 0 and q.used = false
 ) t
- WHERE running_weight >= random() * total_weight 
+ WHERE running_weight >= (select val from lim) * total_weight 
  ORDER BY running_weight
  LIMIT 1;
