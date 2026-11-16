@@ -3,6 +3,7 @@ import os
 from datetime import date, time, datetime
 import pytz
 import aiohttp
+from urllib.parse import urljoin
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ApplicationBuilder, Application
@@ -24,7 +25,7 @@ from db.usage import (
 
 from db.models import Competition, Answer as AnswerModel
 from sqlalchemy import select
-from parser import get_packs_by_complexity_sync, parse_pack_questions
+from parser import GotQuestionsParseError, get_packs_by_complexity_sync, parse_pack_questions
 from utils import fetch
 
 logging.basicConfig(
@@ -212,20 +213,30 @@ async def refill_pool_job(context):
         if not main_html:
             logging.error('Failed to fetch main parser page for pool refill')
             return
-        packs_links = get_packs_by_complexity_sync(main_html)
+        try:
+            packs_links = get_packs_by_complexity_sync(main_html)
+        except GotQuestionsParseError:
+            logging.exception('GotQuestions listing structure is not supported; pool refill aborted')
+            return
+        logging.info('Found %s packages matching difficulty filter', len(packs_links))
         for pack_url in packs_links:
             if pack_url in present_packs:
                 continue
-            html = await fetch(session, PARSER_BASE_URL + pack_url)
+            html = await fetch(session, urljoin(PARSER_BASE_URL, pack_url))
             if not html:
                 continue
-            parsed = parse_pack_questions(html)
+            try:
+                parsed = parse_pack_questions(html)
+            except GotQuestionsParseError:
+                logging.exception('GotQuestions package structure is not supported: %s', pack_url)
+                continue
             logging.info(f'Parsed {len(parsed)} questions from {pack_url} for pool refill')
             for q in parsed:
                 try:
                     await add_pool_question(
                         q['body'], q.get('answer'), q.get('handout'), q.get('comment'),
-                        q.get('image_path'),  q.get('authors'),  q.get('tournaments'), pack_url
+                        urljoin(PARSER_BASE_URL, q['image_path']) if q.get('image_path') else None,
+                        q.get('authors'), q.get('tournaments'), pack_url
                         )
                     added += 1
                 except Exception:

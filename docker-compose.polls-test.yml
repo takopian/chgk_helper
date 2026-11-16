@@ -1,0 +1,9 @@
+services:
+  polls_bot:
+    env_file:
+      - .env
+      - .env.polls-test.local
+    environment:
+      PG_DATABASE: chgk_polls_test
+      DATABASE_URL: ""
+      WEBSERVER_URL: http://webserver:8000

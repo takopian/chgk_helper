@@ -70,71 +70,154 @@ def parse_quizzes(html) -> list[Quiz]:
     return quizzes
 
 
-def get_packs_by_complexity_sync(html: str, low: float = 2.5, high: float = 5.0) -> list[str]:
+class GotQuestionsParseError(ValueError):
+    """The page does not contain the expected GotQuestions data."""
+
+
+def _flight_objects(html: str):
+    """Decode Next.js data without executing page JavaScript.
+
+    Transport chunks may split records. Text records use UTF-8 byte lengths,
+    while ordinary records contain JSON and may reference other records.
+    """
     soup = BeautifulSoup(html, "html.parser")
-    result = []
-
-    cards = soup.find_all("div", class_="break-words")
-    for card in cards:
-        pack_link = card.find("a", href=re.compile(r"^/pack/\d+"))
-        if not pack_link:
-            continue
-
-        complexity_span = None
-        for span in card.find_all("span"):
-            if "сложность" in span.get_text(strip=True).lower():
-                complexity_span = span
-                break
-
-        if not complexity_span:
-            continue
-
-        complexity_text = ""
-        for sibling in complexity_span.find_next_siblings():
-            complexity_text += sibling.get_text(" ", strip=True) + " "
-
-        numbers = re.findall(r"\d+(?:\.\d+)?", complexity_text)
-        for num_str in numbers:
+    decoder = json.JSONDecoder()
+    chunks = []
+    for script in soup.find_all("script"):
+        text = script.string or ""
+        for match in re.finditer(r"self\.__next_f\.push\(\s*", text):
             try:
-                val = float(num_str.replace(",", "."))
-            except ValueError:
+                payload, _ = decoder.raw_decode(text, match.end())
+            except ValueError as exc:
+                raise GotQuestionsParseError("Invalid Next.js transport JSON") from exc
+            if isinstance(payload, list) and len(payload) > 1 and payload[0] == 1:
+                if isinstance(payload[1], str):
+                    chunks.append(payload[1])
+    stream = "".join(chunks).encode("utf-8")
+    records = {}
+    pos = 0
+    while pos < len(stream):
+        header = re.match(rb"([0-9a-f]*):", stream[pos:])
+        if not header:
+            raise GotQuestionsParseError("Invalid Next.js record header")
+        key = header[1].decode()
+        pos += header.end()
+        if stream[pos:pos + 1] == b"T":
+            size = re.match(rb"T([0-9a-f]+),", stream[pos:])
+            if not size:
+                raise GotQuestionsParseError("Invalid Next.js text record")
+            pos += size.end()
+            end = pos + int(size[1], 16)
+            if end > len(stream):
+                raise GotQuestionsParseError("Truncated Next.js text record")
+            records[key] = stream[pos:end].decode("utf-8")
+            pos = end
+        else:
+            end = stream.find(b"\n", pos)
+            if end < 0:
+                end = len(stream)
+            try:
+                records[key] = json.loads(stream[pos:end])
+            except (ValueError, UnicodeDecodeError):
+                pass  # Module, hint and other non-JSON Flight records.
+            pos = end + 1
+
+    def resolve(value, seen=frozenset()):
+        if isinstance(value, str):
+            if value.startswith("$$"):
+                return value[1:]
+            if re.fullmatch(r"\$[0-9a-f]+", value):
+                key = value[1:]
+                if key not in records or key in seen:
+                    raise GotQuestionsParseError(f"Unresolved Next.js reference {value}")
+                return resolve(records[key], seen | {key})
+        elif isinstance(value, list):
+            return [resolve(item, seen) for item in value]
+        elif isinstance(value, dict):
+            return {key: resolve(item, seen) for key, item in value.items()}
+        return value
+
+    def walk(value):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+
+    # Resolve only domain objects, not React's component tree.
+    objects = [obj for value in records.values() for obj in walk(value)]
+    return soup, objects, resolve
+
+
+def get_packs_by_complexity_sync(html: str, low: float = 2.5, high: float = 5.0) -> list[str]:
+    soup, objects, resolve = _flight_objects(html)
+    linked_ids = {int(m[1]) for a in soup.find_all("a", href=True)
+                  if (m := re.fullmatch(r"/pack/(\d+)", a["href"]))}
+    packs = {}
+    for obj in objects:
+        if obj.get("id") in linked_ids and "truedls" in obj and "title" in obj:
+            pack = resolve(obj)
+            packs[pack["id"]] = pack
+    if not packs:
+        raise GotQuestionsParseError("No package metadata found on GotQuestions listing")
+    result = []
+    for pack_id, pack in packs.items():
+        for value in pack.get("truedls") or []:
+            if value is None:
                 continue
-            if low <= val <= high:
-                result.append(pack_link["href"])
+            try:
+                difficulty = float(value)
+            except (TypeError, ValueError) as exc:
+                raise GotQuestionsParseError("Invalid package difficulty") from exc
+            if low <= difficulty <= high:
+                result.append(f"/pack/{pack_id}")
                 break
     return result
 
 
 def parse_pack_questions(html: str):
-    soup = BeautifulSoup(html, "html.parser")
-
-    h1 = soup.find("h1")
-    source_pack = h1.get_text(strip=True) if h1 else None
-
+    _, objects, resolve = _flight_objects(html)
+    packs = [resolve(obj) for obj in objects if "tours" in obj and "title" in obj and "id" in obj]
+    if not packs:
+        raise GotQuestionsParseError("No package with tours found on GotQuestions page")
     questions = []
-    raw_questions = []
-    for script in soup.find_all("script"):
-        if not script.string:
-            continue
-        # Try to find JSON array embedded as in test.py
-        matches = re.findall(r'"questions\\"\s*:\s*(\[.*?\}\}\]\}\]\})', script.string, re.DOTALL | re.IGNORECASE)
-        for match in matches:
-            try:
-                match = match.replace('\\"', '"')[:-1]
-                match = match.replace('\\"', '"')
-                qs = json.loads(match)
-                if isinstance(qs, list):
-                    raw_questions.extend(qs)
-            except Exception:
-                continue
-    for q in raw_questions:
-        questions.append({
-            "body": q.get("text", ""),
-            "handout": q.get("razdatkaText", None),
-            "answer": q.get("answer", ""),
-            "image_path": q.get("razdatkaPic", None),
-            "comment": q.get("comment", None),
-            "authors": q.get("authors", []),
-            "tournaments": q.get("tournaments", []),
-        })
+    seen = set()
+    for pack in packs:
+        for tour in pack["tours"]:
+            if not isinstance(tour.get("questions"), list):
+                raise GotQuestionsParseError("Missing questions in package tour")
+            for q in tour["questions"]:
+                if q.get("takenDown"):
+                    continue
+                if q.get("id") in seen:
+                    continue
+                if not q.get("text") or not isinstance(q.get("answer"), str):
+                    raise GotQuestionsParseError("Question text or answer is missing")
+                if q.get("id") is not None:
+                    seen.add(q["id"])
+                authors = []
+                for author in q.get("authors") or []:
+                    person = author.get("person", author)
+                    if not person.get("name"):
+                        raise GotQuestionsParseError("Question author name is missing")
+                    authors.append({"id": person.get("id"), "name": person["name"]})
+                tournaments = []
+                for tournament in q.get("tournaments") or pack.get("legacyTournaments") or []:
+                    title = tournament.get("title") or tournament.get("name")
+                    if not title:
+                        raise GotQuestionsParseError("Tournament title is missing")
+                    tournaments.append({"id": tournament.get("id"), "title": title})
+                questions.append({
+                    "body": q["text"],
+                    "handout": q.get("razdatkaText") or None,
+                    "answer": q["answer"],
+                    "image_path": q.get("razdatkaPic") or None,
+                    "comment": q.get("comment") or "",
+                    "authors": authors,
+                    "tournaments": tournaments,
+                })
+    if not questions:
+        raise GotQuestionsParseError("No usable questions found in package")
     return questions

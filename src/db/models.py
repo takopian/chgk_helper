@@ -1,19 +1,108 @@
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy import (
     Column,
     Integer,
+    BigInteger,
     String,
     DateTime,
     Date,
     Boolean,
     Text,
     ForeignKey,
+    ForeignKeyConstraint,
     func,
     UniqueConstraint,
     Table,
 )
 
 Base = declarative_base()
+
+
+class TelegramPoll(Base):
+    __tablename__ = 'telegram_polls'
+    bot_id = Column(BigInteger, primary_key=True)
+    poll_id = Column(String(128), primary_key=True)
+    chat_id = Column(BigInteger, ForeignKey('poll_chats.id'), nullable=False)
+    message_id = Column(BigInteger, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class TelegramPollOption(Base):
+    __tablename__ = 'telegram_poll_options'
+    __table_args__ = (
+        ForeignKeyConstraint(['bot_id', 'poll_id'], ['telegram_polls.bot_id', 'telegram_polls.poll_id']),
+        ForeignKeyConstraint(['chat_id', 'game_id'], ['poll_games.chat_id', 'poll_games.id']),
+    )
+    bot_id = Column(BigInteger, primary_key=True)
+    poll_id = Column(String(128), primary_key=True)
+    option_id = Column(Integer, primary_key=True)
+    text = Column(Text, nullable=False)
+    chat_id = Column(BigInteger, nullable=False)
+    game_id = Column(String(32), nullable=True)
+
+
+class PollVoteEvent(Base):
+    __tablename__ = 'poll_vote_events'
+    __table_args__ = (ForeignKeyConstraint(
+        ['bot_id', 'poll_id'], ['telegram_polls.bot_id', 'telegram_polls.poll_id']),)
+    bot_id = Column(BigInteger, primary_key=True)
+    update_id = Column(BigInteger, primary_key=True)
+    poll_id = Column(String(128), nullable=False, index=True)
+    voter_kind = Column(String(8), nullable=False)
+    voter_id = Column(BigInteger, nullable=False)
+    display_name = Column(Text, nullable=False)
+    username = Column(Text)
+    option_ids = Column(ARRAY(Integer), nullable=False)
+    received_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class PollVote(Base):
+    __tablename__ = 'poll_votes'
+    __table_args__ = (ForeignKeyConstraint(
+        ['bot_id', 'poll_id'], ['telegram_polls.bot_id', 'telegram_polls.poll_id']),)
+    bot_id = Column(BigInteger, primary_key=True)
+    poll_id = Column(String(128), primary_key=True)
+    voter_kind = Column(String(8), primary_key=True)
+    voter_id = Column(BigInteger, primary_key=True)
+    display_name = Column(Text, nullable=False)
+    username = Column(Text)
+    option_ids = Column(ARRAY(Integer), nullable=False)
+    received_at = Column(DateTime(timezone=True), nullable=False)
+    last_update_id = Column(BigInteger, nullable=False)
+
+
+class PollChat(Base):
+    __tablename__ = 'poll_chats'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=False)
+    games = relationship('PollGame', back_populates='chat', cascade='all, delete-orphan')
+
+
+class PollGame(Base):
+    __tablename__ = 'poll_games'
+    __table_args__ = (UniqueConstraint('chat_id', 'poll_text', name='uq_poll_game_chat_text'),)
+
+    chat_id = Column(BigInteger, ForeignKey('poll_chats.id', ondelete='CASCADE'), primary_key=True)
+    id = Column(String(32), primary_key=True)
+    poll_text = Column(Text, nullable=False)
+    url = Column(Text)
+    difficulty = Column(String(128))
+    date = Column(DateTime, nullable=False, index=True)
+    chat = relationship('PollChat', back_populates='games')
+    registration = relationship('PollRegistration', back_populates='game', uselist=False,
+                                cascade='all, delete-orphan')
+
+
+class PollRegistration(Base):
+    __tablename__ = 'poll_registrations'
+    __table_args__ = (ForeignKeyConstraint(
+        ['chat_id', 'game_id'], ['poll_games.chat_id', 'poll_games.id'], ondelete='CASCADE'),)
+
+    chat_id = Column(BigInteger, primary_key=True)
+    game_id = Column(String(32), primary_key=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    game = relationship('PollGame', back_populates='registration')
 
 
 # Association tables for many-to-many relationships

@@ -1,5 +1,9 @@
 import locale
+import asyncio
+import logging
 from datetime import datetime
+from email.utils import parsedate_to_datetime
+from datetime import timezone
 
 import aiohttp
 import yaml
@@ -42,13 +46,34 @@ def write_yaml(path, data):
 
 
 async def fetch(session: aiohttp.ClientSession, url: str) -> str | None:
-    try:
-        async with session.get(url, timeout=20) as resp:
-            if resp.status != 200:
-                return None
-            return await resp.text()
-    except Exception as e:
-        return None
+    for attempt in range(3):
+        delay = 2 ** (attempt + 1)
+        try:
+            async with session.get(url, timeout=20) as resp:
+                if resp.status == 200:
+                    return await resp.text()
+                logging.warning('Fetch %s returned HTTP %s (attempt %s/3)', url, resp.status, attempt + 1)
+                if resp.status != 429 and not 500 <= resp.status < 600:
+                    return None
+                retry_after = resp.headers.get('Retry-After')
+                if retry_after:
+                    try:
+                        delay = max(0, float(retry_after))
+                    except ValueError:
+                        try:
+                            delay = max(0, (parsedate_to_datetime(retry_after) - datetime.now(timezone.utc)).total_seconds())
+                        except (ValueError, TypeError, OverflowError):
+                            pass
+                    # Defer to the next job instead of retrying before a long server cooldown.
+                    if delay > 60:
+                        logging.error('Fetch %s deferred: Retry-After exceeds 60 seconds', url)
+                        return None
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logging.warning('Fetch %s failed (attempt %s/3): %s', url, attempt + 1, exc)
+        if attempt < 2:
+            await asyncio.sleep(delay)
+    logging.error('Fetch %s failed after 3 attempts', url)
+    return None
 
 
 async def request_lifejournal(link: str) -> str:

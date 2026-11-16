@@ -618,18 +618,23 @@ def main():
     webhook_app.router.add_post(webhook_path, handle_question_webhook)
     webhook_app.router.add_post(competition_webhook_path, handle_competition_webhook)
     
-    # Setup webhook server as a background task
-    async def start_webhook_server(context):
+    # Start after Telegram initialization, independent of scheduler misfire timing.
+    async def initialize_with_webhook(app):
+        await post_init(app)
         runner = web.AppRunner(webhook_app)
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', webhook_port)
         await site.start()
         logging.info(f"Webhook server started on port {webhook_port}")
-        # Store runner in context so we can clean it up later
-        context.application.webhook_runner = runner
+        app.bot_data['webhook_runner'] = runner
+
+    async def shutdown_webhook(app):
+        runner = app.bot_data.pop('webhook_runner', None)
+        if runner is not None:
+            await runner.cleanup()
     
-    # Run the webhook server once when app starts
-    application.job_queue.run_once(start_webhook_server, when=0)
+    application.post_init = initialize_with_webhook
+    application.post_shutdown = shutdown_webhook
     
     # Run telegram polling with allow_reentry to prevent event loop issues
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
