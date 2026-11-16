@@ -17,7 +17,6 @@ async def get_difficulty(link) -> str | None:
     entry = soup.find('div', class_='aentry-post__text aentry-post__text--view')
     if not entry:
         logging.error(f"Could not find difficulty for {link}")
-        logging.error(html)
         return None
     text = entry.get_text(separator=" ", strip=True)
     match = re.search(r"TrueDL:\s*([\d.]+)", text)
@@ -41,7 +40,11 @@ def parse_date(date_str: str) -> datetime:
 def parse_quizzes(html) -> list[Quiz]:
     soup = BeautifulSoup(html, 'html.parser')
     entry_content = soup.find('div', class_='entry-content')
+    if entry_content is None:
+        raise ValueError('LiveJournal listing has no div.entry-content (unexpected page or changed markup)')
     entry_body = entry_content.find('div', class_='entry-body')
+    if entry_body is None:
+        raise ValueError('LiveJournal listing has no div.entry-body (unexpected page or changed markup)')
     quizzes = []
 
     current_date = None

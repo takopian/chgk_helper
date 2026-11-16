@@ -78,7 +78,7 @@ async def fetch(session: aiohttp.ClientSession, url: str) -> str | None:
 
 async def request_lifejournal(link: str) -> str:
     global session
-    if session is None:
+    if session is None or session.closed:
         connector = aiohttp.TCPConnector(family=socket.AF_INET, limit=10)
         timeout = aiohttp.ClientTimeout(total=30)
         session = aiohttp.ClientSession(connector=connector, timeout=timeout)
@@ -88,5 +88,13 @@ async def request_lifejournal(link: str) -> str:
         "Accept-Language": "en-US,en;q=0.9",
         "Connection": "keep-alive",
     }) as response:
+        response.raise_for_status()
         html = await response.text()
     return html
+
+
+async def close_lifejournal_session():
+    global session
+    if session is not None:
+        await session.close()
+        session = None
